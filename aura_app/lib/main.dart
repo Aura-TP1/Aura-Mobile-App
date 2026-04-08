@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'screens/search_screen.dart';
 import 'screens/my_objects.dart';
+import 'screens/camera_detection_view.dart';
 
 
 void main() {
@@ -44,7 +45,7 @@ class AuraApp extends StatelessWidget {
       routes: {
         '/': (context) => const SearchObjectScreen(),
         '/search': (context) => const SearchObjectScreen(),
-        // '/camera': (context) => const CameraScreen(),
+        '/camera': (context) => const CameraDetectionView(),
         '/my-objects': (context) => const MyObjectsScreen(),
         // '/settings': (context) => const SettingsScreen(),
       },
