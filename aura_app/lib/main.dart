@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'screens/home_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/my_objects.dart';
 import 'screens/camera_detection_view.dart';
+import 'screens/settings_screen.dart';
+import 'screens/help_screen.dart';
 
 
 void main() {
@@ -43,11 +46,12 @@ class AuraApp extends StatelessWidget {
       
       // Rutas nombradas
       routes: {
-        '/': (context) => const SearchObjectScreen(),
+        '/': (context) => const HomeScreen(),
         '/search': (context) => const SearchObjectScreen(),
         '/camera': (context) => const CameraDetectionView(),
         '/my-objects': (context) => const MyObjectsScreen(),
-        // '/settings': (context) => const SettingsScreen(),
+        '/settings': (context) => const SettingsScreen(),
+        '/help': (context) => const HelpScreen(),
       },
     );
   }
