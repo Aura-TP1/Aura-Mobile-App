@@ -1,7 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../services/tts.dart';
 
 const Color kAuraRed = Color(0xFFE53935);
+
+/// Texto del menú que el TTS repite periódicamente.
+const String _kMenuSpeech =
+    'Elige una opción: Qué ves, Buscar objeto, Mis objetos, o Toca para hablar.';
+const String _kWelcomeSpeech = 'Hola, soy AURA. ¿Qué necesitas? $_kMenuSpeech';
+
+/// Cada cuánto recordar el menú si el usuario está inactivo.
+const Duration _kReminderInterval = Duration(seconds: 25);
+
+/// Ventana de gracia para no pisar la voz del usuario después de tocar algo.
+const Duration _kUserActionGrace = Duration(seconds: 8);
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -12,23 +25,54 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final AudioFeedback _audio = AudioFeedback();
+  Timer? _reminderTimer;
+  DateTime _lastUserActionAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
     super.initState();
     _audio.init();
+    // Lectura inicial + loop de recordatorios. Pequeño delay para que el TTS
+    // esté inicializado y no pisar la animación de entrada.
+    Future.delayed(const Duration(milliseconds: 700), () {
+      if (!mounted) return;
+      _audio.speak(_kWelcomeSpeech);
+      _startReminderLoop();
+    });
   }
 
   @override
   void dispose() {
+    _reminderTimer?.cancel();
     _audio.stop();
     super.dispose();
   }
 
+  void _startReminderLoop() {
+    _reminderTimer?.cancel();
+    _reminderTimer = Timer.periodic(_kReminderInterval, (_) {
+      if (!mounted) return;
+      // Pausar cuando la pantalla no está visible (usuario navegó a otra ruta).
+      final route = ModalRoute.of(context);
+      if (route == null || !route.isCurrent) return;
+      // No pisar una acción reciente del usuario.
+      final sinceAction = DateTime.now().difference(_lastUserActionAt);
+      if (sinceAction < _kUserActionGrace) return;
+      _audio.speak(_kMenuSpeech);
+    });
+  }
+
   Future<void> _handleMenuButtonTap(String label, String route) async {
+    _lastUserActionAt = DateTime.now();
     await _audio.speak(label);
     if (!mounted) return;
-    Navigator.pushNamed(context, route);
+    await Navigator.pushNamed(context, route);
+    // De vuelta a home: re-saludar y reiniciar la ventana de gracia.
+    if (!mounted) return;
+    _lastUserActionAt = DateTime.now();
+    await Future.delayed(const Duration(milliseconds: 600));
+    if (!mounted) return;
+    _audio.speak(_kMenuSpeech);
   }
 
   @override
@@ -91,7 +135,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 label: 'TOCA PARA\nHABLAR',
                 icon: Icons.mic,
                 backgroundColor: const Color(0xFF6D4C41),
-                onTap: () => _audio.speak('Función de voz disponible pronto'),
+                onTap: () {
+                  _lastUserActionAt = DateTime.now();
+                  _audio.speak('Función de voz disponible pronto');
+                },
               ),
             ],
           ),

@@ -1,8 +1,14 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:speech_to_text/speech_recognition_error.dart';
+import 'package:speech_to_text/speech_recognition_result.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 
+import '../models/saved_object.dart';
+import '../services/saved_objects_repository.dart';
 import '../services/tts.dart';
 import 'mock_detection_screen.dart';
 
@@ -23,29 +29,23 @@ class SearchObjectScreen extends StatefulWidget {
 
 class _SearchObjectScreenState extends State<SearchObjectScreen>
     with SingleTickerProviderStateMixin {
-  static const String _prefsKey = 'aura_saved_objects';
   static const List<String> _defaultObjects = [
     'Mi tomatodo',
     'Mis llaves',
     'Medicinas',
   ];
 
-  /// Resultados simulados que cicla la entrada de voz mock.
-  static const List<String> _mockVoiceResults = [
-    'llaves',
-    'medicinas',
-    'lentes',
-  ];
-
   final AudioFeedback _audio = AudioFeedback();
+  final SpeechToText _speech = SpeechToText();
+  final SavedObjectsRepository _repo = SavedObjectsRepository();
   late final AnimationController _pulseController;
 
-  List<String> _savedObjects = List.of(_defaultObjects);
+  List<SavedObject> _savedObjects = const [];
   String? _currentTarget;
-  int _voiceCycleIndex = 0;
   bool _isListening = false;
   bool _isSearching = false;
-  Timer? _listeningTimer;
+  bool _sttAvailable = false;
+  bool _gotResult = false;
 
   @override
   void initState() {
@@ -60,7 +60,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
 
   @override
   void dispose() {
-    _listeningTimer?.cancel();
+    _speech.cancel();
     _pulseController.dispose();
     _audio.stop();
     super.dispose();
@@ -68,35 +68,111 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
 
   // ── Persistencia ──────────────────────────────────────────────────────
   Future<void> _loadSavedObjects() async {
-    final prefs = await SharedPreferences.getInstance();
-    final stored = prefs.getStringList(_prefsKey);
-    if (stored != null && stored.isNotEmpty && mounted) {
+    var stored = await _repo.getAll();
+    // Si no hay nada en v2 ni en la lista migrada, siembra los defaults una
+    // sola vez para no romper la UX que ya tenía la app antes del repo.
+    if (stored.isEmpty) {
+      for (final name in _defaultObjects) {
+        await _repo.save(SavedObject(
+          name: name,
+          embedding: const [],
+          createdAt: DateTime.now(),
+        ));
+      }
+      stored = await _repo.getAll();
+    }
+    if (mounted) {
       setState(() => _savedObjects = stored);
     }
   }
 
-  Future<void> _persistSavedObjects() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_prefsKey, _savedObjects);
+  // ── Entrada de voz real (STT) ─────────────────────────────────────────
+  Future<bool> _ensureSpeechReady() async {
+    if (_sttAvailable) return true;
+    if (!kIsWeb) {
+      final status = await Permission.microphone.request();
+      if (!status.isGranted) {
+        await _audio.speak('Necesito permiso para usar el micrófono.');
+        return false;
+      }
+    }
+    _sttAvailable = await _speech.initialize(
+      onStatus: _onSpeechStatus,
+      onError: _onSpeechError,
+    );
+    if (!_sttAvailable) {
+      await _audio.speak('Reconocimiento de voz no disponible.');
+    }
+    return _sttAvailable;
   }
 
-  // ── Entrada de voz simulada ───────────────────────────────────────────
   Future<void> _handleMicTap() async {
-    if (_isListening) return;
-    setState(() => _isListening = true);
-    await _audio.speak('Te escucho. Di el nombre del objeto.');
+    if (_isListening) {
+      await _speech.stop();
+      if (mounted) setState(() => _isListening = false);
+      return;
+    }
 
-    _listeningTimer?.cancel();
-    _listeningTimer = Timer(const Duration(seconds: 2), () async {
-      if (!mounted) return;
-      final result = _mockVoiceResults[_voiceCycleIndex % _mockVoiceResults.length];
-      _voiceCycleIndex++;
+    final ready = await _ensureSpeechReady();
+    if (!ready) return;
+
+    _gotResult = false;
+    if (mounted) {
       setState(() {
-        _isListening = false;
-        _currentTarget = result;
+        _isListening = true;
+        _currentTarget = null;
       });
-      await _audio.speak('Entendí: $result. Presiona activar para buscar.');
+    }
+    await _audio.speak('Te escucho.');
+
+    await _speech.listen(
+      onResult: _onSpeechResult,
+      localeId: 'es-ES',
+      listenFor: const Duration(seconds: 5),
+      pauseFor: const Duration(seconds: 5),
+      partialResults: false,
+      cancelOnError: true,
+    );
+  }
+
+  Future<void> _onSpeechResult(SpeechRecognitionResult result) async {
+    // TODO: match STT result against saved objects list for fuzzy search (implement later)
+    if (!result.finalResult) return;
+    _gotResult = true;
+    final text = result.recognizedWords.trim();
+    if (text.isEmpty) {
+      await _handleNoResult();
+      return;
+    }
+    final target = _stripPossessive(text);
+    if (!mounted) return;
+    setState(() {
+      _isListening = false;
+      _currentTarget = target;
     });
+    await _audio.speak('Entendí: $target. Presiona activar para buscar.');
+  }
+
+  void _onSpeechStatus(String status) {
+    // When STT stops (timeout / end of speech) without a final result,
+    // treat it as a silent timeout so the user gets feedback + reset.
+    if (status == 'notListening' || status == 'done') {
+      if (_isListening && !_gotResult) {
+        _handleNoResult();
+      }
+    }
+  }
+
+  void _onSpeechError(SpeechRecognitionError error) {
+    if (_isListening) {
+      _handleNoResult();
+    }
+  }
+
+  Future<void> _handleNoResult() async {
+    if (!mounted) return;
+    setState(() => _isListening = false);
+    await _audio.speak('No te escuché. Intenta de nuevo.');
   }
 
   // ── Activar búsqueda ──────────────────────────────────────────────────
@@ -126,9 +202,9 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
   }
 
   // ── Selección directa desde la lista ──────────────────────────────────
-  Future<void> _selectFromList(String object) async {
+  Future<void> _selectFromList(SavedObject obj) async {
     // Normaliza "Mis llaves" → "llaves" para el TTS.
-    final target = _stripPossessive(object);
+    final target = _stripPossessive(obj.name);
     setState(() {
       _currentTarget = target;
       _isSearching = true;
@@ -155,51 +231,13 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
     return lower;
   }
 
-  // ── Añadir objeto a la lista ──────────────────────────────────────────
-  Future<void> _addObjectDialog() async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Nuevo objeto'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          textCapitalization: TextCapitalization.sentences,
-          decoration: const InputDecoration(
-            hintText: 'Ej: Mis anteojos',
-            border: OutlineInputBorder(),
-          ),
-          style: const TextStyle(fontSize: 18),
-          onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('CANCELAR'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: kAuraRed),
-            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
-            child: const Text('AGREGAR',
-                style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-    if (result == null || result.isEmpty) return;
-    setState(() => _savedObjects.add(result));
-    await _persistSavedObjects();
-    await _audio.speak('Agregué $result a tu lista.');
-  }
-
   Future<void> _removeObject(int index) async {
     final removed = _savedObjects[index];
-    setState(() => _savedObjects.removeAt(index));
-    await _persistSavedObjects();
+    await _repo.delete(removed.name);
     if (!mounted) return;
+    setState(() => _savedObjects.removeAt(index));
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Eliminado: $removed')),
+      SnackBar(content: Text('Eliminado: ${removed.name}')),
     );
   }
 
@@ -399,7 +437,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
     if (_savedObjects.isEmpty) {
       return const Center(
         child: Text(
-          'No tienes objetos guardados.\nPresiona AGREGAR para empezar.',
+          'No tienes objetos guardados.\nVe a Mis objetos para añadir uno.',
           textAlign: TextAlign.center,
           style: TextStyle(color: Colors.black54, fontSize: 16),
         ),
@@ -409,9 +447,9 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
       itemCount: _savedObjects.length,
       separatorBuilder: (_, __) => const SizedBox(height: 12),
       itemBuilder: (context, index) {
-        final name = _savedObjects[index];
+        final obj = _savedObjects[index];
         return Dismissible(
-          key: ValueKey('saved_${index}_$name'),
+          key: ValueKey('saved_${index}_${obj.name}'),
           direction: DismissDirection.endToStart,
           background: Container(
             alignment: Alignment.centerRight,
@@ -425,7 +463,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
           onDismissed: (_) => _removeObject(index),
           child: InkWell(
             borderRadius: BorderRadius.circular(12),
-            onTap: () => _selectFromList(name),
+            onTap: () => _selectFromList(obj),
             child: Container(
               height: kMinButtonHeight,
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -438,7 +476,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
                 children: [
                   Expanded(
                     child: Text(
-                      name,
+                      obj.name,
                       style: const TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w600,

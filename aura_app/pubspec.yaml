@@ -31,7 +31,7 @@ dependencies:
   flutter_tts: ^4.0.2
   
   # Speech-to-Text
-  speech_to_text: ^7.0.0
+  speech_to_text: ^6.6.0
   
 
 dev_dependencies:
