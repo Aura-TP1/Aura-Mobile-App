@@ -26,6 +26,14 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>AURA necesita la cámara para detectar objetos y ayudarte a encontrarlos.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>AURA necesita el micrófono para escuchar tus comandos de voz.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>AURA usa reconocimiento de voz para entender tus instrucciones y buscar objetos.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>AURA puede guardar fotos de tus objetos para reconocerlos más fácilmente.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

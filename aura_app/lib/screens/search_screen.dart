@@ -10,7 +10,7 @@ import 'package:speech_to_text/speech_to_text.dart';
 import '../models/saved_object.dart';
 import '../services/saved_objects_repository.dart';
 import '../services/tts.dart';
-import 'mock_detection_screen.dart';
+import 'real_search_screen.dart';
 
 /// Color rojo de marca AURA.
 const Color kAuraRed = Color(0xFFE53935);
@@ -191,9 +191,16 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
     await _audio.speak('Buscando tus $target. Apunta la cámara al objeto.');
     if (!mounted) return;
 
+    final idx = _savedObjects.indexWhere(
+      (o) => _stripPossessive(o.name) == target,
+    );
+    final obj = idx >= 0
+        ? _savedObjects[idx]
+        : SavedObject(name: target, embedding: const [], createdAt: DateTime.now());
+
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => MockDetectionScreen(target: target),
+        builder: (_) => RealSearchScreen(target: target, savedObject: obj),
       ),
     );
 
@@ -214,7 +221,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
 
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => MockDetectionScreen(target: target),
+        builder: (_) => RealSearchScreen(target: target, savedObject: obj),
       ),
     );
 

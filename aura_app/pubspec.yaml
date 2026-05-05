@@ -32,7 +32,10 @@ dependencies:
   
   # Speech-to-Text
   speech_to_text: ^6.6.0
-  
+
+  # Vibración
+  vibration: ^2.0.0
+
 
 dev_dependencies:
   flutter_test:

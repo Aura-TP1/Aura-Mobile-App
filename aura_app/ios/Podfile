@@ -1,0 +1,67 @@
+# ─── Plataforma mínima ────────────────────────────────────────────────────────
+# 13.0 requerido por:
+#   · tflite_flutter  (TensorFlowLiteC framework)
+#   · google_mlkit_text_recognition (cuando se agregue)
+#   · Consistente con IPHONEOS_DEPLOYMENT_TARGET en project.pbxproj
+platform :ios, '13.0'
+
+# Evita que CocoaPods envíe métricas de red durante el build
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug'   => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+# ─── Localiza el Flutter SDK ──────────────────────────────────────────────────
+def flutter_root
+  generated = File.expand_path(
+    File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__
+  )
+  unless File.exist?(generated)
+    raise "#{generated} no existe. Ejecuta 'flutter pub get' antes de 'pod install'."
+  end
+  File.foreach(generated) do |line|
+    m = line.match(/FLUTTER_ROOT\=(.*)/)
+    return m[1].strip if m
+  end
+  raise "FLUTTER_ROOT no encontrado en #{generated}. Borra Generated.xcconfig y ejecuta 'flutter pub get'."
+end
+
+require File.expand_path(
+  File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root
+)
+
+flutter_ios_podfile_setup
+
+# ─── Target principal ─────────────────────────────────────────────────────────
+target 'Runner' do
+  use_frameworks!
+  use_modular_headers!
+
+  # Instala automáticamente los pods de todos los paquetes Flutter declarados
+  # en pubspec.yaml (camera, tflite_flutter, speech_to_text, vibration, etc.)
+  # Cuando se agregue google_mlkit_text_recognition al pubspec, este comando
+  # instalará también el pod GoogleMLKit/TextRecognition sin cambios manuales.
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+
+  target 'RunnerTests' do
+    inherit! :search_paths
+  end
+end
+
+# ─── Post-install: ajustes de compatibilidad ──────────────────────────────────
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    flutter_additional_ios_build_settings(target)
+
+    target.build_configurations.each do |config|
+      # Garantiza que todos los pods usen el mismo deployment target
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+
+      # Necesario para tflite_flutter: evita errores de firma en pods binarios
+      config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+    end
+  end
+end
