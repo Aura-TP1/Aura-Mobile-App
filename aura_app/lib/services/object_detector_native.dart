@@ -53,9 +53,10 @@ class ObjectDetector {
       ),
     );
 
+    // El modelo YOLOv8n TFLite produce [1, 8400, 84] — box-first, NO transpuesto.
     final output = List.generate(
       1,
-      (_) => List.generate(84, (_) => List.filled(_numBoxes, 0.0)),
+      (_) => List.generate(_numBoxes, (_) => List.filled(84, 0.0)),
     );
 
     _interpreter!.run(input, output);
@@ -63,6 +64,8 @@ class ObjectDetector {
     return _parseOutput(output[0]);
   }
 
+  // out tiene shape [8400][84]: cada fila es un box con [cx, cy, w, h, score0..score79].
+  // Las coordenadas vienen en píxeles del espacio 640×640 del modelo.
   List<Detection> _parseOutput(List<List<double>> out) {
     final detections = <Detection>[];
 
@@ -70,7 +73,7 @@ class ObjectDetector {
       double maxConf = 0;
       int classId = 0;
       for (int c = 0; c < _numClasses; c++) {
-        final v = out[4 + c][i];
+        final v = out[i][4 + c];
         if (v > maxConf) {
           maxConf = v;
           classId = c;
@@ -79,16 +82,11 @@ class ObjectDetector {
 
       if (maxConf < _confThreshold) continue;
 
-      double cx = out[0][i];
-      double cy = out[1][i];
-      double w = out[2][i];
-      double h = out[3][i];
-      if (cx > 1.5 || cy > 1.5 || w > 1.5 || h > 1.5) {
-        cx /= inputSize;
-        cy /= inputSize;
-        w /= inputSize;
-        h /= inputSize;
-      }
+      // Coordenadas en píxeles del espacio del modelo → normalizar a [0, 1].
+      final cx = out[i][0] / inputSize;
+      final cy = out[i][1] / inputSize;
+      final w  = out[i][2] / inputSize;
+      final h  = out[i][3] / inputSize;
 
       detections.add(
         Detection(
@@ -113,8 +111,7 @@ class ObjectDetector {
       keep.add(dets[i]);
       for (int j = i + 1; j < dets.length; j++) {
         if (suppressed[j]) continue;
-        if (dets[i].label == dets[j].label &&
-            _iou(dets[i].rect, dets[j].rect) > iouThresh) {
+        if (_iou(dets[i].rect, dets[j].rect) > iouThresh) {
           suppressed[j] = true;
         }
       }
