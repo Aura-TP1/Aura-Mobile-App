@@ -165,7 +165,7 @@ class _HomeScreenState extends State<HomeScreen> {
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.3),
+                color: Colors.black.withOpacity( 0.3),
                 blurRadius: 8,
                 offset: const Offset(0, 4),
               ),
@@ -180,7 +180,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   height: 70,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Colors.white.withValues(alpha: 0.25),
+                    color: Colors.white.withOpacity( 0.25),
                   ),
                   child: Icon(
                     icon,

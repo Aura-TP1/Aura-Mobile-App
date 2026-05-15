@@ -122,7 +122,7 @@ class _HelpScreenState extends State<HelpScreen> {
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.1),
+                color: Colors.white.withOpacity( 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
@@ -153,13 +153,13 @@ class _HelpScreenState extends State<HelpScreen> {
             shape: BoxShape.circle,
             gradient: LinearGradient(
               colors: [
-                const Color(0xFFFFD700).withValues(alpha: 0.8),
+                const Color(0xFFFFD700).withOpacity( 0.8),
                 const Color(0xFFFFA500),
               ],
             ),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFFFFD700).withValues(alpha: 0.4),
+                color: const Color(0xFFFFD700).withOpacity( 0.4),
                 blurRadius: 20,
                 spreadRadius: 4,
               ),
@@ -207,9 +207,9 @@ class _HelpScreenState extends State<HelpScreen> {
   Widget _buildStepContent() {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.05),
+        color: Colors.white.withOpacity( 0.05),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+        border: Border.all(color: Colors.white.withOpacity( 0.1)),
       ),
       padding: const EdgeInsets.all(20),
       child: Text(
@@ -232,7 +232,7 @@ class _HelpScreenState extends State<HelpScreen> {
         gradient: LinearGradient(
           begin: Alignment.bottomCenter,
           end: Alignment.topCenter,
-          colors: [Colors.black.withValues(alpha: 0.95), Colors.transparent],
+          colors: [Colors.black.withOpacity( 0.95), Colors.transparent],
         ),
       ),
       child: Column(
@@ -247,7 +247,7 @@ class _HelpScreenState extends State<HelpScreen> {
                 border: Border.all(
                   color: _isPlayingAudio
                       ? const Color(0xFFFFD700)
-                      : Colors.white.withValues(alpha: 0.3),
+                      : Colors.white.withOpacity( 0.3),
                   width: 2,
                 ),
                 borderRadius: BorderRadius.circular(8),
@@ -288,14 +288,14 @@ class _HelpScreenState extends State<HelpScreen> {
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     decoration: BoxDecoration(
                       color: _currentStep == 0
-                          ? Colors.white.withValues(alpha: 0.05)
-                          : Colors.white.withValues(alpha: 0.1),
+                          ? Colors.white.withOpacity( 0.05)
+                          : Colors.white.withOpacity( 0.1),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Icon(
                       Icons.arrow_back,
                       color: _currentStep == 0
-                          ? Colors.white.withValues(alpha: 0.3)
+                          ? Colors.white.withOpacity( 0.3)
                           : Colors.white70,
                       size: 20,
                     ),
@@ -310,14 +310,14 @@ class _HelpScreenState extends State<HelpScreen> {
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     decoration: BoxDecoration(
                       color: _currentStep == _steps.length - 1
-                          ? Colors.white.withValues(alpha: 0.05)
-                          : Colors.white.withValues(alpha: 0.1),
+                          ? Colors.white.withOpacity( 0.05)
+                          : Colors.white.withOpacity( 0.1),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Icon(
                       Icons.arrow_forward,
                       color: _currentStep == _steps.length - 1
-                          ? Colors.white.withValues(alpha: 0.3)
+                          ? Colors.white.withOpacity( 0.3)
                           : Colors.white70,
                       size: 20,
                     ),
@@ -338,14 +338,14 @@ class _HelpScreenState extends State<HelpScreen> {
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [
-                    const Color(0xFFFFD700).withValues(alpha: 0.9),
+                    const Color(0xFFFFD700).withOpacity( 0.9),
                     const Color(0xFFFFA500),
                   ],
                 ),
                 borderRadius: BorderRadius.circular(8),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFFFFD700).withValues(alpha: 0.3),
+                    color: const Color(0xFFFFD700).withOpacity( 0.3),
                     blurRadius: 12,
                     spreadRadius: 2,
                   ),
