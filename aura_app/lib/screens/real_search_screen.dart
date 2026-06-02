@@ -57,7 +57,16 @@ class _RealSearchScreenState extends State<RealSearchScreen>
   late final AnimationController _foundController;
 
   static const Duration _frameInterval = Duration(milliseconds: 300);
+
+  /// Umbral base de match confirmado. NO se modifica (requisito).
   static const double _threshold = 0.75;
+
+  /// Umbral inferior de "duda": entre [_kMaybeThreshold] y [_threshold] avisamos
+  /// al usuario que creemos verlo pero sin confirmar.
+  static const double _kMaybeThreshold = 0.70;
+
+  /// Cooldown del aviso de duda para no repetirlo cada frame.
+  DateTime _lastMaybeAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
@@ -171,6 +180,8 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         if (sim >= _threshold) {
           await _onFound();
           return;
+        } else if (sim >= _kMaybeThreshold) {
+          _announceMaybe();
         }
       } catch (e) {
         debugPrint('RealSearchScreen scan error: $e');
@@ -189,12 +200,22 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     _sweepController.stop();
     _foundController.forward();
 
-    final hasVibrator = await Vibration.hasVibrator() ?? false;
+    final hasVibrator = (await Vibration.hasVibrator()) == true;
     if (hasVibrator) {
-      await Vibration.vibrate(pattern: [0, 300, 100, 300]);
+      // Vibración larga (500 ms) al confirmar el match (spec).
+      await Vibration.vibrate(duration: 500);
     }
 
     await _audio.speak('¡Encontrado! Tu ${widget.target} está aquí.');
+  }
+
+  /// Aviso de "duda" cuando la similitud cae entre 0.70 y 0.75: creemos ver
+  /// el objeto pero sin confirmarlo. Respeta un cooldown para no repetir.
+  void _announceMaybe() {
+    final now = DateTime.now();
+    if (now.difference(_lastMaybeAt) < const Duration(seconds: 4)) return;
+    _lastMaybeAt = now;
+    _audio.speak('Creo que veo tu ${widget.target}, pero no estoy seguro.');
   }
 
   void _searchAgain() {

@@ -49,11 +49,24 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
   bool _modelLoaded = false;
   bool _isSaving = false;
   bool _isListeningMic = false;
+  bool _handledArgs = false;
 
   @override
   void initState() {
     super.initState();
     _init();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Prefill por comando de voz "Aura guarda esto como X".
+    if (_handledArgs) return;
+    _handledArgs = true;
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is String && args.trim().isNotEmpty) {
+      _nameController.text = args.trim();
+    }
   }
 
   Future<void> _init() async {
@@ -141,18 +154,17 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
 
     try {
       if (!kIsWeb && _cameraReady && _modelLoaded) {
-        final xfile = await _camera!.takePicture();
-        final bytes = await xfile.readAsBytes();
-        final decoded = img.decodeImage(bytes);
-        if (decoded != null) {
-          embedding = await _embeddings.extractEmbedding(decoded);
-        }
+        // Capturamos 3 fotos desde ángulos ligeramente distintos y
+        // promediamos sus embeddings → vector más robusto a posición e
+        // iluminación. (No tocamos el modelo ni la inferencia.)
+        embedding = await _captureAveragedEmbedding();
       }
       await _repo.save(SavedObject(
         name: name,
         embedding: embedding,
         createdAt: DateTime.now(),
       ));
+      await _audio.haptic(200); // confirmación háptica
       await _audio.speak('Guardé $name.');
       if (!mounted) return;
       Navigator.of(context).pop(true);
@@ -165,6 +177,37 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         );
       }
     }
+  }
+
+  /// Captura 3 fotos guiando al usuario por voz para que mueva un poco la
+  /// cámara entre cada una, extrae un embedding por foto y los promedia.
+  Future<List<double>> _captureAveragedEmbedding() async {
+    const prompts = [
+      'Mantén firme. Capturando.',
+      'Perfecto, ahora mueve un poco la cámara.',
+      'Una más.',
+    ];
+    final embeddings = <List<double>>[];
+
+    for (var i = 0; i < prompts.length; i++) {
+      await _audio.speak(prompts[i]);
+      // Pequeña pausa para que el usuario reposicione la cámara.
+      await Future.delayed(const Duration(milliseconds: 700));
+      if (!_cameraReady || _camera == null) break;
+      try {
+        final xfile = await _camera!.takePicture();
+        final bytes = await xfile.readAsBytes();
+        final decoded = img.decodeImage(bytes);
+        if (decoded != null) {
+          final emb = await _embeddings.extractEmbedding(decoded);
+          if (emb.isNotEmpty) embeddings.add(emb);
+        }
+      } catch (e) {
+        debugPrint('Error capturando foto ${i + 1}: $e');
+      }
+    }
+
+    return averageEmbeddings(embeddings);
   }
 
   // ── UI ────────────────────────────────────────────────────────────────

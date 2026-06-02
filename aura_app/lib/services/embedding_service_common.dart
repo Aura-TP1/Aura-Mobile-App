@@ -27,6 +27,36 @@ double cosineSimilarity(List<double> a, List<double> b) {
   return dot / denom;
 }
 
+/// Promedia varios embeddings (mismo largo) en uno solo, componente a
+/// componente. Sirve para combinar varias capturas del mismo objeto desde
+/// ángulos distintos y obtener un vector más robusto a posición/iluminación.
+///
+/// - Ignora vectores vacíos.
+/// - Si los largos no coinciden, usa el del primer vector no vacío y descarta
+///   los que difieran (defensivo; en la práctica MobileNetV2 da largo fijo).
+/// - Devuelve lista vacía si no hay nada que promediar.
+///
+/// No re-normaliza: [cosineSimilarity] ya normaliza al comparar.
+List<double> averageEmbeddings(List<List<double>> embeddings) {
+  final valid = embeddings.where((e) => e.isNotEmpty).toList();
+  if (valid.isEmpty) return const [];
+  final len = valid.first.length;
+  final sum = List<double>.filled(len, 0.0);
+  int count = 0;
+  for (final e in valid) {
+    if (e.length != len) continue;
+    for (int i = 0; i < len; i++) {
+      sum[i] += e[i];
+    }
+    count++;
+  }
+  if (count == 0) return const [];
+  for (int i = 0; i < len; i++) {
+    sum[i] /= count;
+  }
+  return sum;
+}
+
 /// Encuentra el [SavedObject] más similar al [query] en [saved].
 ///
 /// - Ignora objetos cuyo `embedding` esté vacío (p. ej. migrados desde

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../services/tts.dart';
+import '../services/stt_service.dart';
+import '../services/voice_commands.dart';
 
 const Color kAuraRed = Color(0xFFE53935);
 
@@ -25,8 +27,10 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final AudioFeedback _audio = AudioFeedback();
+  final SttService _stt = SttService();
   Timer? _reminderTimer;
   DateTime _lastUserActionAt = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _isListening = false;
 
   @override
   void initState() {
@@ -44,6 +48,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _reminderTimer?.cancel();
+    _stt.stop();
     _audio.stop();
     super.dispose();
   }
@@ -73,6 +78,64 @@ class _HomeScreenState extends State<HomeScreen> {
     await Future.delayed(const Duration(milliseconds: 600));
     if (!mounted) return;
     _audio.speak(_kMenuSpeech);
+  }
+
+  // ── Comando de voz global ("TOCA PARA HABLAR") ────────────────────────
+  Future<void> _handleVoiceCommand() async {
+    _lastUserActionAt = DateTime.now();
+    if (_isListening) {
+      await _stt.stop();
+      if (mounted) setState(() => _isListening = false);
+      return;
+    }
+    setState(() => _isListening = true);
+    await _audio.speak('Te escucho. Di un comando.');
+    await _stt.startListening(onResult: (text) async {
+      if (!mounted) return;
+      setState(() => _isListening = false);
+      if (text == null || text.isEmpty) {
+        await _audio.speak('No entendí, intenta de nuevo.');
+        return;
+      }
+      await _routeVoiceCommand(text);
+    });
+  }
+
+  Future<void> _routeVoiceCommand(String text) async {
+    _lastUserActionAt = DateTime.now();
+    final cmd = VoiceCommandParser.parse(text);
+    switch (cmd.type) {
+      case AuraCommandType.describe:
+        await _audio.speak('Abriendo la cámara.');
+        if (!mounted) return;
+        await Navigator.pushNamed(context, '/camera');
+        break;
+      case AuraCommandType.readText:
+        await _audio.speak('Abriendo lectura de texto.');
+        if (!mounted) return;
+        // Argumento 'ocr' indica a la cámara que arranque en modo lectura.
+        await Navigator.pushNamed(context, '/camera', arguments: 'ocr');
+        break;
+      case AuraCommandType.search:
+        await _audio.speak(
+            cmd.argument == null ? 'Abriendo búsqueda.' : 'Buscando ${cmd.argument}.');
+        if (!mounted) return;
+        await Navigator.pushNamed(context, '/search', arguments: cmd.argument);
+        break;
+      case AuraCommandType.save:
+        await _audio.speak(cmd.argument == null
+            ? 'Abriendo guardar objeto.'
+            : 'Guardar ${cmd.argument}.');
+        if (!mounted) return;
+        await Navigator.pushNamed(context, '/save-object', arguments: cmd.argument);
+        break;
+      case AuraCommandType.stop:
+        await _audio.stop();
+        break;
+      case AuraCommandType.unknown:
+        await _audio.speak('No entendí, intenta de nuevo.');
+        break;
+    }
   }
 
   @override
@@ -132,13 +195,12 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 16),
               _buildMenuButton(
-                label: 'TOCA PARA\nHABLAR',
-                icon: Icons.mic,
-                backgroundColor: const Color(0xFF6D4C41),
-                onTap: () {
-                  _lastUserActionAt = DateTime.now();
-                  _audio.speak('Función de voz disponible pronto');
-                },
+                label: _isListening ? 'ESCUCHANDO...' : 'TOCA PARA\nHABLAR',
+                icon: _isListening ? Icons.mic : Icons.mic_none,
+                backgroundColor: _isListening
+                    ? const Color(0xFFD84315)
+                    : const Color(0xFF6D4C41),
+                onTap: _handleVoiceCommand,
               ),
             ],
           ),

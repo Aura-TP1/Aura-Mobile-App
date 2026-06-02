@@ -12,7 +12,9 @@ dependencies:
   
   # ML/AI
   tflite_flutter: ^0.12.1
-  
+  # OCR offline on-device (modo lectura de texto en la cámara)
+  google_mlkit_text_recognition: ^0.13.1
+
   # Cámara
   camera: ^0.10.5+5
   

@@ -46,6 +46,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
   bool _isSearching = false;
   bool _sttAvailable = false;
   bool _gotResult = false;
+  bool _handledArgs = false;
 
   @override
   void initState() {
@@ -56,6 +57,25 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
     )..repeat(reverse: true);
     _audio.init();
     _loadSavedObjects();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Si llegamos por comando de voz "Aura busca X", pre-seleccionamos X.
+    if (_handledArgs) return;
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is String && args.trim().isNotEmpty) {
+      _handledArgs = true;
+      final target = _stripPossessive(args);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => _currentTarget = target);
+        _audio.speak('Entendí: $target. Presiona activar para buscar.');
+      });
+    } else {
+      _handledArgs = true;
+    }
   }
 
   @override
@@ -127,8 +147,8 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
 
     await _speech.listen(
       onResult: _onSpeechResult,
-      localeId: 'es-ES',
-      listenFor: const Duration(seconds: 5),
+      localeId: 'es-PE',
+      listenFor: const Duration(seconds: 10),
       pauseFor: const Duration(seconds: 5),
       partialResults: false,
       cancelOnError: true,

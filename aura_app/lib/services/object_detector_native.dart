@@ -9,9 +9,10 @@ import 'object_detector_common.dart';
 
 /// Detector de objetos basado en YOLOv8n (TFLite).
 class ObjectDetector {
-  static const int inputSize = 640;
+  // Verificado contra el log del modelo: Input [1,320,320,3], Output [1,84,2100]
+  static const int inputSize = 320;
   static const int _numClasses = 80;
-  static const int _numBoxes = 8400;
+  static const int _numBoxes = 2100;
   static const double _confThreshold = 0.4;
   static const double _iouThreshold = 0.45;
 
@@ -53,10 +54,11 @@ class ObjectDetector {
       ),
     );
 
-    // El modelo YOLOv8n TFLite produce [1, 8400, 84] — box-first, NO transpuesto.
+    // Output real del modelo: [1, 84, 2100] — feature-first (transpuesto).
+    // Cada columna i es un box; filas 0-3 son cx/cy/w/h, filas 4-83 son scores.
     final output = List.generate(
       1,
-      (_) => List.generate(_numBoxes, (_) => List.filled(84, 0.0)),
+      (_) => List.generate(84, (_) => List.filled(_numBoxes, 0.0)),
     );
 
     _interpreter!.run(input, output);
@@ -64,8 +66,9 @@ class ObjectDetector {
     return _parseOutput(output[0]);
   }
 
-  // out tiene shape [8400][84]: cada fila es un box con [cx, cy, w, h, score0..score79].
-  // Las coordenadas vienen en píxeles del espacio 640×640 del modelo.
+  // out tiene shape [84][2100]: out[feature][box].
+  // Filas 0-3: cx, cy, w, h en píxeles del espacio 320×320.
+  // Filas 4-83: score de cada clase COCO.
   List<Detection> _parseOutput(List<List<double>> out) {
     final detections = <Detection>[];
 
@@ -73,7 +76,7 @@ class ObjectDetector {
       double maxConf = 0;
       int classId = 0;
       for (int c = 0; c < _numClasses; c++) {
-        final v = out[i][4 + c];
+        final v = out[4 + c][i];
         if (v > maxConf) {
           maxConf = v;
           classId = c;
@@ -83,10 +86,10 @@ class ObjectDetector {
       if (maxConf < _confThreshold) continue;
 
       // Coordenadas en píxeles del espacio del modelo → normalizar a [0, 1].
-      final cx = out[i][0] / inputSize;
-      final cy = out[i][1] / inputSize;
-      final w  = out[i][2] / inputSize;
-      final h  = out[i][3] / inputSize;
+      final cx = out[0][i] / inputSize;
+      final cy = out[1][i] / inputSize;
+      final w  = out[2][i] / inputSize;
+      final h  = out[3][i] / inputSize;
 
       detections.add(
         Detection(

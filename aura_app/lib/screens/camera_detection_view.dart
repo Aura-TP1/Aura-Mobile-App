@@ -1,17 +1,26 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
+import 'package:vibration/vibration.dart';
 
 import '../services/object_detector.dart';
+import '../services/ocr_service.dart';
+import '../services/stt_service.dart';
 import '../services/tts.dart';
+import '../services/voice_commands.dart';
 
-/// Vista de cámara con detección de objetos en vivo.
+/// Modo de la pantalla de cámara: detección de objetos (YOLO) o lectura de
+/// texto (OCR). Solo uno está activo a la vez; al cambiar, el otro se pausa.
+enum CamMode { yolo, ocr }
+
+/// Vista de cámara con detección de objetos en vivo y lectura de texto (OCR).
 ///
-/// Usa un bucle con [CameraController.takePicture] en lugar de
-/// [startImageStream], porque este último no está soportado en Flutter Web
-/// ni en Windows desktop (los objetivos principales de AURA para pruebas
-/// en laptop).
+/// YOLO usa [startImageStream] en Android/iOS para evitar el sonido de
+/// obturador. En Web/Desktop (sin soporte) cae a [takePicture] automáticamente.
+/// OCR siempre usa [takePicture] (solo 1.5 s de intervalo).
 class CameraDetectionView extends StatefulWidget {
   const CameraDetectionView({super.key});
 
@@ -27,19 +36,37 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   int _selectedCameraIdx = 0;
 
   final ObjectDetector _detector = ObjectDetector();
+  final OcrService _ocr = OcrService();
+  final SttService _stt = SttService();
   final AudioFeedback _audio = AudioFeedback();
 
   bool _isInitialized = false;
   bool _isDetecting = false;
   bool _streamActive = false;
   bool _modelLoaded = false;
+  bool _voiceListening = false;
+  bool _handledArgs = false;
+
+  /// true cuando YOLO corre con startImageStream (sin sonido de obturador).
+  bool _usingStream = false;
+
+  /// Modo activo. Default YOLO; puede arrancar en OCR vía argumento de ruta.
+  CamMode _mode = CamMode.yolo;
 
   List<Detection> _detections = [];
+  List<String> _lastDetectedLabels = const [];
+  DateTime _lastHapticAt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastStreamFrameAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  String _ocrText = '';
   String _statusMessage = 'Inicializando...';
   String? _errorMessage;
 
-  /// Intervalo entre capturas (≈ 3–4 fps). Ajustable según rendimiento.
+  /// Throttle del stream YOLO (≈ 3–4 fps sin sonido de obturador).
   static const Duration _frameInterval = Duration(milliseconds: 250);
+
+  /// Intervalo entre capturas OCR (usa takePicture solo 1.5 s, menos molesto).
+  static const Duration _ocrInterval = Duration(milliseconds: 1500);
 
   // ── Lifecycle ─────────────────────────────────────────────────────────
   @override
@@ -53,6 +80,19 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     await _audio.init();
     await _initCamera();
     await _loadModel();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Argumento de ruta 'ocr' (comando "Aura lee") arranca en modo lectura.
+    if (_handledArgs) return;
+    _handledArgs = true;
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args == 'ocr') {
+      _mode = CamMode.ocr;
+      _statusMessage = 'Modo lectura de texto.';
+    }
   }
 
   @override
@@ -71,8 +111,14 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _streamActive = false;
+    if (_usingStream) {
+      try { _controller?.stopImageStream(); } catch (_) {}
+      _usingStream = false;
+    }
     _controller?.dispose();
     _detector.dispose();
+    _ocr.dispose();
+    _stt.stop();
     _audio.stop();
     super.dispose();
   }
@@ -152,7 +198,7 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     });
   }
 
-  // ── Bucle de detección ────────────────────────────────────────────────
+  // ── Detección ─────────────────────────────────────────────────────────
   void _startDetection() {
     final c = _controller;
     if (c == null || !c.value.isInitialized) return;
@@ -168,10 +214,21 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
       _streamActive = true;
       _statusMessage = 'Detectando...';
     });
-    _detectionLoop();
+
+    // YOLO en native → startImageStream (sin sonido de obturador).
+    // OCR o web/desktop → bucle con takePicture.
+    if (_mode == CamMode.yolo && !kIsWeb) {
+      _startStreamMode();
+    } else {
+      _detectionLoop();
+    }
   }
 
   void _stopDetection() {
+    if (_usingStream) {
+      try { _controller?.stopImageStream(); } catch (_) {}
+      _usingStream = false;
+    }
     setState(() {
       _streamActive = false;
       _detections = [];
@@ -179,34 +236,152 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     });
   }
 
+  // ── Stream YOLO (sin sonido de obturador) ────────────────────────────
+  void _startStreamMode() {
+    try {
+      _controller!.startImageStream(_onCameraFrame);
+      _usingStream = true;
+    } catch (e) {
+      // startImageStream no soportado (Windows/macOS) → fallback con takePicture.
+      debugPrint('startImageStream no disponible, usando takePicture: $e');
+      _usingStream = false;
+      _detectionLoop();
+    }
+  }
+
+  /// Callback del stream — se invoca en el main isolate por el plugin.
+  void _onCameraFrame(CameraImage frame) {
+    if (!_streamActive || _mode != CamMode.yolo || _isDetecting) return;
+
+    final now = DateTime.now();
+    if (now.difference(_lastStreamFrameAt) < _frameInterval) return;
+    _lastStreamFrameAt = now;
+
+    _isDetecting = true;
+    final image = _convertCameraImage(frame);
+    if (image == null) { _isDetecting = false; return; }
+
+    _detector.detect(image).then((dets) {
+      _isDetecting = false;
+      if (!mounted || !_streamActive) return;
+
+      final newLabels = dets.map((d) => d.label).toList();
+
+      // Vibración suave (80 ms) solo cuando aparece un objeto que no estaba.
+      if (dets.isNotEmpty && _hasNewLabel(newLabels, _lastDetectedLabels)) {
+        final elapsed = DateTime.now().difference(_lastHapticAt);
+        if (elapsed > const Duration(seconds: 2)) {
+          _lastHapticAt = DateTime.now();
+          Vibration.hasVibrator().then((has) {
+            if (has == true) Vibration.vibrate(duration: 80);
+          });
+        }
+      }
+      _lastDetectedLabels = newLabels;
+
+      setState(() => _detections = dets);
+      if (dets.isNotEmpty) {
+        _audio.announceScene(newLabels);
+        setState(() => _statusMessage =
+            '${dets.first.label} (${(dets.first.confidence * 100).toStringAsFixed(0)}%)');
+      } else if (mounted) {
+        setState(() => _statusMessage = 'Detectando...');
+      }
+    }).catchError((e) {
+      _isDetecting = false;
+      debugPrint('Error en detección stream: $e');
+    });
+  }
+
+  bool _hasNewLabel(List<String> newLabels, List<String> oldLabels) {
+    for (final l in newLabels) {
+      if (!oldLabels.contains(l)) return true;
+    }
+    return false;
+  }
+
+  // ── Conversión CameraImage → img.Image ───────────────────────────────
+  img.Image? _convertCameraImage(CameraImage frame) {
+    try {
+      if (frame.format.group == ImageFormatGroup.yuv420) {
+        return _convertYUV420(frame);
+      } else if (frame.format.group == ImageFormatGroup.bgra8888) {
+        return _convertBGRA8888(frame);
+      }
+      return null;
+    } catch (e) {
+      debugPrint('Error convirtiendo frame: $e');
+      return null;
+    }
+  }
+
+  img.Image _convertYUV420(CameraImage frame) {
+    final w = frame.width;
+    final h = frame.height;
+    final yPlane = frame.planes[0];
+    final uPlane = frame.planes[1];
+    final vPlane = frame.planes[2];
+    final yStride = yPlane.bytesPerRow;
+    final uvStride = uPlane.bytesPerRow;
+    final uvPixel = uPlane.bytesPerPixel ?? 1;
+
+    final rgb = Uint8List(w * h * 3);
+    int idx = 0;
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        final yy = yPlane.bytes[y * yStride + x] - 16;
+        final uvIdx = (y >> 1) * uvStride + (x >> 1) * uvPixel;
+        final uu = uPlane.bytes[uvIdx] - 128;
+        final vv = vPlane.bytes[uvIdx] - 128;
+        rgb[idx++] = ((298 * yy + 409 * vv + 128) >> 8).clamp(0, 255);
+        rgb[idx++] = ((298 * yy - 100 * uu - 208 * vv + 128) >> 8).clamp(0, 255);
+        rgb[idx++] = ((298 * yy + 516 * uu + 128) >> 8).clamp(0, 255);
+      }
+    }
+    return img.Image.fromBytes(
+      width: w, height: h, bytes: rgb.buffer, numChannels: 3,
+    );
+  }
+
+  img.Image _convertBGRA8888(CameraImage frame) {
+    return img.Image.fromBytes(
+      width: frame.width,
+      height: frame.height,
+      bytes: frame.planes[0].bytes.buffer,
+      numChannels: 4,
+      order: img.ChannelOrder.bgra,
+    );
+  }
+
+  // ── Bucle OCR / fallback web (takePicture) ───────────────────────────
   Future<void> _detectionLoop() async {
     while (mounted && _streamActive) {
       final c = _controller;
       if (c == null || !c.value.isInitialized) break;
       if (_isDetecting) {
-        await Future.delayed(_frameInterval);
+        await Future.delayed(_ocrInterval);
         continue;
       }
       _isDetecting = true;
       try {
         final xfile = await c.takePicture();
-        final bytes = await xfile.readAsBytes();
-        final image = img.decodeImage(bytes);
-        if (image == null) {
-          debugPrint('No se pudo decodificar el frame.');
+        if (_mode == CamMode.ocr) {
+          await _processOcr(xfile);
         } else {
-          final dets = await _detector.detect(image);
-          if (!mounted) break;
-          setState(() => _detections = dets);
-          if (dets.isNotEmpty) {
-            final top = dets.first;
-            await _audio.announce(top.label);
-            if (mounted) {
-              setState(() =>
-                  _statusMessage = '${top.label} (${(top.confidence * 100).toStringAsFixed(0)}%)');
+          // Fallback web/desktop: YOLO con takePicture (sin stream disponible).
+          final bytes = await xfile.readAsBytes();
+          final image = img.decodeImage(bytes);
+          if (image != null) {
+            final dets = await _detector.detect(image);
+            if (!mounted) break;
+            setState(() => _detections = dets);
+            if (dets.isNotEmpty) {
+              _audio.announceScene(dets.map((d) => d.label).toList());
+              setState(() => _statusMessage =
+                  '${dets.first.label} (${(dets.first.confidence * 100).toStringAsFixed(0)}%)');
+            } else if (mounted) {
+              setState(() => _statusMessage = 'Detectando...');
             }
-          } else if (mounted) {
-            setState(() => _statusMessage = 'Detectando...');
           }
         }
       } catch (e) {
@@ -214,8 +389,89 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
       } finally {
         _isDetecting = false;
       }
-      await Future.delayed(_frameInterval);
+      await Future.delayed(_mode == CamMode.ocr ? _ocrInterval : _frameInterval);
     }
+  }
+
+  /// Procesa un frame en modo lectura de texto (OCR).
+  Future<void> _processOcr(XFile xfile) async {
+    final text = await _ocr.recognize(xfile.path);
+    if (!mounted) return;
+    if (text.isEmpty) {
+      setState(() => _statusMessage = 'Acerca la cámara al texto...');
+      return;
+    }
+    // Solo leer en voz alta cuando el texto cambia, para no repetir.
+    if (text != _ocrText) {
+      setState(() {
+        _ocrText = text;
+        _statusMessage = 'Leyendo texto';
+      });
+      _audio.speak(text);
+    }
+  }
+
+  /// Cambia entre modo YOLO y OCR. Detiene el mecanismo anterior (stream o
+  /// bucle), actualiza el estado y reinicia si estaba activo.
+  void _setMode(CamMode mode) {
+    if (_mode == mode) return;
+    final wasActive = _streamActive;
+
+    // Para limpiamente el modo anterior antes de cambiar.
+    if (wasActive) _stopDetection();
+
+    setState(() {
+      _mode = mode;
+      _detections = [];
+      _ocrText = '';
+      _lastDetectedLabels = const [];
+      _statusMessage = mode == CamMode.ocr
+          ? 'Modo lectura de texto.'
+          : 'Modo detección de objetos.';
+    });
+    _audio.resetScene();
+    _audio.haptic(200);
+    _audio.speak(mode == CamMode.ocr
+        ? 'Modo lectura de texto activado.'
+        : 'Modo detección de objetos activado.');
+
+    if (wasActive) _startDetection();
+  }
+
+  // ── Voz dentro de la cámara ───────────────────────────────────────────
+  Future<void> _handleVoiceTap() async {
+    if (_voiceListening) {
+      await _stt.stop();
+      if (mounted) setState(() => _voiceListening = false);
+      return;
+    }
+    setState(() => _voiceListening = true);
+    await _audio.speak('Te escucho.');
+    await _stt.startListening(onResult: (text) {
+      if (!mounted) return;
+      setState(() => _voiceListening = false);
+      if (text == null || text.isEmpty) {
+        _audio.speak('No entendí, intenta de nuevo.');
+        return;
+      }
+      final cmd = VoiceCommandParser.parse(text);
+      switch (cmd.type) {
+        case AuraCommandType.readText:
+          _setMode(CamMode.ocr);
+          if (!_streamActive) _startDetection();
+          break;
+        case AuraCommandType.describe:
+          _setMode(CamMode.yolo);
+          if (!_streamActive) _startDetection();
+          break;
+        case AuraCommandType.stop:
+          _stopDetection();
+          _audio.stop();
+          break;
+        default:
+          _audio.speak('No entendí, intenta de nuevo.');
+      }
+    });
   }
 
   // ── UI ────────────────────────────────────────────────────────────────
@@ -322,6 +578,8 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
               ),
             ),
             const Spacer(),
+            _buildModeToggle(),
+            const SizedBox(width: 10),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
               decoration: BoxDecoration(
@@ -361,6 +619,54 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     );
   }
 
+  /// Toggle compacto YOLO/OCR (objetos ↔ texto).
+  Widget _buildModeToggle() {
+    Widget pill(String label, IconData icon, CamMode mode) {
+      final active = _mode == mode;
+      return GestureDetector(
+        onTap: () => _setMode(mode),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: active ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon,
+                  size: 14, color: active ? Colors.black : Colors.white70),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  color: active ? Colors.black : Colors.white70,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          pill('OBJETOS', Icons.visibility, CamMode.yolo),
+          pill('TEXTO', Icons.text_fields, CamMode.ocr),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBottomControls() {
     return Container(
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
@@ -374,7 +680,10 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (_detections.isNotEmpty) _buildDetectionBadge(_detections.first),
+          if (_mode == CamMode.ocr && _ocrText.isNotEmpty)
+            _buildOcrCard()
+          else if (_mode == CamMode.yolo && _detections.isNotEmpty)
+            _buildDetectionBadge(_detections.first),
           const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -383,6 +692,11 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
                 icon: Icons.flip_camera_ios,
                 label: 'Cambiar',
                 onTap: _cameras.length > 1 ? _switchCamera : null,
+              ),
+              _IconButton(
+                icon: _voiceListening ? Icons.mic : Icons.mic_none,
+                label: 'Voz',
+                onTap: _handleVoiceTap,
               ),
               GestureDetector(
                 onTap: _streamActive ? _stopDetection : _startDetection,
@@ -426,6 +740,39 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
             textAlign: TextAlign.center,
           ),
         ],
+      ),
+    );
+  }
+
+  /// Tarjeta que muestra el texto leído por OCR (modo lectura).
+  Widget _buildOcrCard() {
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 140),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.2)),
+      ),
+      child: SingleChildScrollView(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.text_fields, color: Colors.white70, size: 18),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                _ocrText,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  height: 1.3,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

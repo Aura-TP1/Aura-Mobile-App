@@ -11,7 +11,7 @@ import 'package:speech_to_text/speech_to_text.dart';
 /// mantiene su propia implementación inline y NO depende de este servicio
 /// para evitar tocar código ya funcional.
 ///
-/// Idioma: `es-PE`. Timeout: 5 s de escucha y 5 s de silencio.
+/// Idioma: `es-PE`. Timeout: 10 s de escucha y 5 s de silencio.
 ///
 /// En Chrome delega a Web Speech API (el permiso lo pide el navegador).
 /// En Android usa el `SpeechRecognizer` nativo y pide `RECORD_AUDIO`.
@@ -44,8 +44,8 @@ class SttService {
   ///
   /// - [onResult] se invoca exactamente UNA vez por sesión, con el texto
   ///   reconocido (trim) o `null` si hubo timeout, error o silencio.
-  /// - La sesión se cancela automáticamente tras 5 s de silencio o 5 s
-  ///   totales de escucha.
+  /// - La sesión se cancela automáticamente tras 5 s de silencio o 10 s
+  ///   totales de escucha (spec: timeout de 10 s esperando respuesta).
   Future<void> startListening({
     required void Function(String?) onResult,
   }) async {
@@ -63,7 +63,7 @@ class SttService {
     await _speech.listen(
       onResult: _onSpeechResult,
       localeId: 'es-PE',
-      listenFor: const Duration(seconds: 5),
+      listenFor: const Duration(seconds: 10),
       pauseFor: const Duration(seconds: 5),
       partialResults: false,
       cancelOnError: true,
