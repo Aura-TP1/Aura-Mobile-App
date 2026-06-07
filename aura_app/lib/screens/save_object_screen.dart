@@ -154,10 +154,9 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
 
     try {
       if (!kIsWeb && _cameraReady && _modelLoaded) {
-        // Capturamos 3 fotos desde ángulos ligeramente distintos y
-        // promediamos sus embeddings → vector más robusto a posición e
-        // iluminación. (No tocamos el modelo ni la inferencia.)
-        embedding = await _captureAveragedEmbedding();
+        // Una sola captura: para alguien con baja visión, reposicionar la
+        // cámara para varias tomas es confuso. Una foto → un embedding.
+        embedding = await _captureEmbedding();
       }
       await _repo.save(SavedObject(
         name: name,
@@ -179,35 +178,22 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     }
   }
 
-  /// Captura 3 fotos guiando al usuario por voz para que mueva un poco la
-  /// cámara entre cada una, extrae un embedding por foto y los promedia.
-  Future<List<double>> _captureAveragedEmbedding() async {
-    const prompts = [
-      'Mantén firme. Capturando.',
-      'Perfecto, ahora mueve un poco la cámara.',
-      'Una más.',
-    ];
-    final embeddings = <List<double>>[];
-
-    for (var i = 0; i < prompts.length; i++) {
-      await _audio.speak(prompts[i]);
-      // Pequeña pausa para que el usuario reposicione la cámara.
-      await Future.delayed(const Duration(milliseconds: 700));
-      if (!_cameraReady || _camera == null) break;
-      try {
-        final xfile = await _camera!.takePicture();
-        final bytes = await xfile.readAsBytes();
-        final decoded = img.decodeImage(bytes);
-        if (decoded != null) {
-          final emb = await _embeddings.extractEmbedding(decoded);
-          if (emb.isNotEmpty) embeddings.add(emb);
-        }
-      } catch (e) {
-        debugPrint('Error capturando foto ${i + 1}: $e');
-      }
+  /// Captura una sola foto y extrae su embedding. Sin pedir reposicionar la
+  /// cámara: más simple y digno para un usuario con baja visión.
+  Future<List<double>> _captureEmbedding() async {
+    await _audio.speak('Mantén firme. Capturando.');
+    await Future.delayed(const Duration(milliseconds: 400));
+    if (!_cameraReady || _camera == null) return const [];
+    try {
+      final xfile = await _camera!.takePicture();
+      final bytes = await xfile.readAsBytes();
+      final decoded = img.decodeImage(bytes);
+      if (decoded == null) return const [];
+      return await _embeddings.extractEmbedding(decoded);
+    } catch (e) {
+      debugPrint('Error capturando foto: $e');
+      return const [];
     }
-
-    return averageEmbeddings(embeddings);
   }
 
   // ── UI ────────────────────────────────────────────────────────────────

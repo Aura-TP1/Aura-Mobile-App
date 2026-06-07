@@ -9,7 +9,8 @@ const Color kAuraRed = Color(0xFFE53935);
 
 /// Texto del menú que el TTS repite periódicamente.
 const String _kMenuSpeech =
-    'Elige una opción: Qué ves, Buscar objeto, Mis objetos, o Toca para hablar.';
+    'Elige una opción: Encontrar objeto, Leer texto, Buscar objeto, Mis objetos, '
+    'o Toca para hablar.';
 const String _kWelcomeSpeech = 'Hola, soy AURA. ¿Qué necesitas? $_kMenuSpeech';
 
 /// Cada cuánto recordar el menú si el usuario está inactivo.
@@ -67,11 +68,12 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  Future<void> _handleMenuButtonTap(String label, String route) async {
+  Future<void> _handleMenuButtonTap(String label, String route,
+      {Object? arguments}) async {
     _lastUserActionAt = DateTime.now();
     await _audio.speak(label);
     if (!mounted) return;
-    await Navigator.pushNamed(context, route);
+    await Navigator.pushNamed(context, route, arguments: arguments);
     // De vuelta a home: re-saludar y reiniciar la ventana de gracia.
     if (!mounted) return;
     _lastUserActionAt = DateTime.now();
@@ -90,11 +92,20 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     setState(() => _isListening = true);
     await _audio.speak('Te escucho. Di un comando.');
+    // Pequeña pausa para que el TTS libere el foco de audio antes de escuchar.
+    await Future.delayed(const Duration(milliseconds: 250));
+    if (!mounted) return;
     await _stt.startListening(onResult: (text) async {
       if (!mounted) return;
       setState(() => _isListening = false);
       if (text == null || text.isEmpty) {
-        await _audio.speak('No entendí, intenta de nuevo.');
+        if (_stt.permanentlyDenied) {
+          await _audio.speak(
+              'Necesito permiso del micrófono. Te llevo a ajustes.');
+          await _stt.openSettings();
+        } else {
+          await _audio.speak('No entendí, intenta de nuevo.');
+        }
         return;
       }
       await _routeVoiceCommand(text);
@@ -166,34 +177,43 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+      // SingleChildScrollView evita el overflow (franja amarilla) si el
+      // dispositivo es bajo o tiene fuentes grandes por accesibilidad.
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _buildMenuButton(
-                label: '¿QUÉ\nVES?',
+                label: 'ENCONTRAR\nOBJETO',
                 icon: Icons.camera_alt,
                 backgroundColor: const Color(0xFF1E88E5),
-                onTap: () => _handleMenuButtonTap('¿Qué ves?', '/camera'),
+                onTap: () => _handleMenuButtonTap('Encontrar objeto', '/camera'),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
+              _buildMenuButton(
+                label: 'LEER\nTEXTO',
+                icon: Icons.text_fields,
+                backgroundColor: const Color(0xFFFB8C00),
+                onTap: () => _handleMenuButtonTap('Leer texto', '/camera',
+                    arguments: 'ocr'),
+              ),
+              const SizedBox(height: 14),
               _buildMenuButton(
                 label: 'BUSCAR\nOBJETO',
                 icon: Icons.search,
                 backgroundColor: const Color(0xFF00C853),
                 onTap: () => _handleMenuButtonTap('Buscar objeto', '/search'),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
               _buildMenuButton(
                 label: 'MIS\nOBJETOS',
                 icon: Icons.folder,
                 backgroundColor: const Color(0xFF7C3AED),
                 onTap: () => _handleMenuButtonTap('Mis objetos', '/my-objects'),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
               _buildMenuButton(
                 label: _isListening ? 'ESCUCHANDO...' : 'TOCA PARA\nHABLAR',
                 icon: _isListening ? Icons.mic : Icons.mic_none,
@@ -221,7 +241,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
         child: Container(
-          height: 100,
+          height: 92,
           decoration: BoxDecoration(
             color: backgroundColor,
             borderRadius: BorderRadius.circular(20),
@@ -256,6 +276,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding: const EdgeInsets.only(left: 24, right: 24),
                   child: Text(
                     label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,

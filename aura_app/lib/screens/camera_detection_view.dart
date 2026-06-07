@@ -79,7 +79,17 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   Future<void> _init() async {
     await _audio.init();
     await _initCamera();
+    // En modo OCR no hace falta YOLO; lo cargamos igual para que el usuario
+    // pueda pedir objetos por voz, pero no bloqueamos el arranque por ello.
     await _loadModel();
+    if (!mounted) return;
+    // Arranque automático: el usuario eligió "Encontrar objeto" o "Leer texto"
+    // desde el menú, así que empezamos a detectar/leer sin que toque ▶.
+    await _audio.speak(_mode == CamMode.ocr
+        ? 'Lectura de texto. Apunta la cámara al texto.'
+        : 'Detección de objetos. Apunta la cámara y te diré qué veo.');
+    if (!mounted) return;
+    _startDetection();
   }
 
   @override
@@ -202,7 +212,8 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   void _startDetection() {
     final c = _controller;
     if (c == null || !c.value.isInitialized) return;
-    if (!_modelLoaded) {
+    // OCR (lectura de texto) usa ML Kit, no necesita el modelo YOLO.
+    if (_mode == CamMode.yolo && !_modelLoaded) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('El modelo aún no está cargado.')),
       );
@@ -447,11 +458,18 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     }
     setState(() => _voiceListening = true);
     await _audio.speak('Te escucho.');
+    await Future.delayed(const Duration(milliseconds: 250));
+    if (!mounted) return;
     await _stt.startListening(onResult: (text) {
       if (!mounted) return;
       setState(() => _voiceListening = false);
       if (text == null || text.isEmpty) {
-        _audio.speak('No entendí, intenta de nuevo.');
+        if (_stt.permanentlyDenied) {
+          _audio.speak('Necesito permiso del micrófono. Te llevo a ajustes.');
+          _stt.openSettings();
+        } else {
+          _audio.speak('No entendí, intenta de nuevo.');
+        }
         return;
       }
       final cmd = VoiceCommandParser.parse(text);
@@ -568,18 +586,19 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
               onPressed: () => Navigator.of(context).maybePop(),
             ),
             const SizedBox(width: 4),
-            const Text(
-              'AURA',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 4,
+            Expanded(
+              child: Text(
+                _mode == CamMode.ocr ? 'LEER TEXTO' : 'ENCONTRAR OBJETO',
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 2,
+                ),
               ),
             ),
-            const Spacer(),
-            _buildModeToggle(),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
               decoration: BoxDecoration(
@@ -615,54 +634,6 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  /// Toggle compacto YOLO/OCR (objetos ↔ texto).
-  Widget _buildModeToggle() {
-    Widget pill(String label, IconData icon, CamMode mode) {
-      final active = _mode == mode;
-      return GestureDetector(
-        onTap: () => _setMode(mode),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: active ? Colors.white : Colors.transparent,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon,
-                  size: 14, color: active ? Colors.black : Colors.white70),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  color: active ? Colors.black : Colors.white70,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          pill('OBJETOS', Icons.visibility, CamMode.yolo),
-          pill('TEXTO', Icons.text_fields, CamMode.ocr),
-        ],
       ),
     );
   }
@@ -722,11 +693,6 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
                     size: 36,
                   ),
                 ),
-              ),
-              _IconButton(
-                icon: Icons.refresh_rounded,
-                label: 'Modelo',
-                onTap: _modelLoaded ? null : _loadModel,
               ),
             ],
           ),
