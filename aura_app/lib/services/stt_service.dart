@@ -41,7 +41,12 @@ class SttService {
   /// Retorna `true` si el motor quedó disponible.
   Future<bool> init() async {
     if (_available) return true;
-    if (!kIsWeb) {
+    // Android: pedimos RECORD_AUDIO con permission_handler.
+    // iOS: NO usamos permission_handler aquí. speech_to_text pide micrófono +
+    // reconocimiento de voz por sí mismo (usando las descripciones del
+    // Info.plist) al llamar initialize(). Así el diálogo aparece aunque los
+    // macros del Podfile no estén, y evitamos bloquear antes de mostrarlo.
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       var status = await Permission.microphone.status;
       if (!status.isGranted) {
         status = await Permission.microphone.request();
@@ -59,7 +64,12 @@ class SttService {
       debugLogging: kDebugMode,
     );
     if (_available) {
+      _permanentlyDenied = false;
       _localeId = await _pickLocale();
+    } else if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      // En iOS, si initialize falla suele ser por permiso denegado: en iOS la
+      // negación es permanente (hay que ir a Ajustes).
+      _permanentlyDenied = !(await _speech.hasPermission);
     }
     return _available;
   }

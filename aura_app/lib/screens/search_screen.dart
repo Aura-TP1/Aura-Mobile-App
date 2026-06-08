@@ -1,14 +1,10 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:speech_to_text/speech_recognition_error.dart';
-import 'package:speech_to_text/speech_recognition_result.dart';
-import 'package:speech_to_text/speech_to_text.dart';
 
 import '../models/saved_object.dart';
 import '../services/saved_objects_repository.dart';
+import '../services/stt_service.dart';
 import '../services/tts.dart';
 import 'real_search_screen.dart';
 
@@ -36,7 +32,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
   ];
 
   final AudioFeedback _audio = AudioFeedback();
-  final SpeechToText _speech = SpeechToText();
+  final SttService _stt = SttService();
   final SavedObjectsRepository _repo = SavedObjectsRepository();
   late final AnimationController _pulseController;
 
@@ -44,8 +40,6 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
   String? _currentTarget;
   bool _isListening = false;
   bool _isSearching = false;
-  bool _sttAvailable = false;
-  bool _gotResult = false;
   bool _handledArgs = false;
 
   @override
@@ -80,7 +74,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
 
   @override
   void dispose() {
-    _speech.cancel();
+    _stt.stop();
     _pulseController.dispose();
     _audio.stop();
     super.dispose();
@@ -106,37 +100,13 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
     }
   }
 
-  // ── Entrada de voz real (STT) ─────────────────────────────────────────
-  Future<bool> _ensureSpeechReady() async {
-    if (_sttAvailable) return true;
-    if (!kIsWeb) {
-      final status = await Permission.microphone.request();
-      if (!status.isGranted) {
-        await _audio.speak('Necesito permiso para usar el micrófono.');
-        return false;
-      }
-    }
-    _sttAvailable = await _speech.initialize(
-      onStatus: _onSpeechStatus,
-      onError: _onSpeechError,
-    );
-    if (!_sttAvailable) {
-      await _audio.speak('Reconocimiento de voz no disponible.');
-    }
-    return _sttAvailable;
-  }
-
+  // ── Entrada de voz ────────────────────────────────────────────────────
   Future<void> _handleMicTap() async {
     if (_isListening) {
-      await _speech.stop();
+      await _stt.stop();
       if (mounted) setState(() => _isListening = false);
       return;
     }
-
-    final ready = await _ensureSpeechReady();
-    if (!ready) return;
-
-    _gotResult = false;
     if (mounted) {
       setState(() {
         _isListening = true;
@@ -144,55 +114,25 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
       });
     }
     await _audio.speak('Te escucho.');
+    await Future.delayed(const Duration(milliseconds: 250));
+    if (!mounted) { setState(() => _isListening = false); return; }
 
-    await _speech.listen(
-      onResult: _onSpeechResult,
-      localeId: 'es-PE',
-      listenFor: const Duration(seconds: 10),
-      pauseFor: const Duration(seconds: 5),
-      partialResults: false,
-      cancelOnError: true,
-    );
-  }
-
-  Future<void> _onSpeechResult(SpeechRecognitionResult result) async {
-    // TODO: match STT result against saved objects list for fuzzy search (implement later)
-    if (!result.finalResult) return;
-    _gotResult = true;
-    final text = result.recognizedWords.trim();
-    if (text.isEmpty) {
-      await _handleNoResult();
-      return;
-    }
-    final target = _stripPossessive(text);
-    if (!mounted) return;
-    setState(() {
-      _isListening = false;
-      _currentTarget = target;
-    });
-    await _audio.speak('Entendí: $target. Presiona activar para buscar.');
-  }
-
-  void _onSpeechStatus(String status) {
-    // When STT stops (timeout / end of speech) without a final result,
-    // treat it as a silent timeout so the user gets feedback + reset.
-    if (status == 'notListening' || status == 'done') {
-      if (_isListening && !_gotResult) {
-        _handleNoResult();
+    await _stt.startListening(onResult: (text) async {
+      if (!mounted) return;
+      setState(() => _isListening = false);
+      if (text == null || text.isEmpty) {
+        if (_stt.permanentlyDenied) {
+          await _audio.speak('Necesito permiso del micrófono. Te llevo a ajustes.');
+          await _stt.openSettings();
+        } else {
+          await _audio.speak('No te escuché. Intenta de nuevo.');
+        }
+        return;
       }
-    }
-  }
-
-  void _onSpeechError(SpeechRecognitionError error) {
-    if (_isListening) {
-      _handleNoResult();
-    }
-  }
-
-  Future<void> _handleNoResult() async {
-    if (!mounted) return;
-    setState(() => _isListening = false);
-    await _audio.speak('No te escuché. Intenta de nuevo.');
+      final target = _stripPossessive(text);
+      setState(() => _currentTarget = target);
+      await _audio.speak('Entendí: $target. Presiona activar para buscar.');
+    });
   }
 
   // ── Activar búsqueda ──────────────────────────────────────────────────
@@ -211,9 +151,17 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
     await _audio.speak('Buscando tus $target. Apunta la cámara al objeto.');
     if (!mounted) return;
 
-    final idx = _savedObjects.indexWhere(
+    // Primero busca coincidencia exacta (sin artículos), luego por substring.
+    // Así "llaves" encuentra "Mis llaves", y "tomatodo" encuentra "Mi tomatodo".
+    int idx = _savedObjects.indexWhere(
       (o) => _stripPossessive(o.name) == target,
     );
+    if (idx < 0) {
+      idx = _savedObjects.indexWhere(
+        (o) => _stripPossessive(o.name).contains(target) ||
+               target.contains(_stripPossessive(o.name)),
+      );
+    }
     final obj = idx >= 0
         ? _savedObjects[idx]
         : SavedObject(name: target, embedding: const [], createdAt: DateTime.now());

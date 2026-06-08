@@ -229,10 +229,13 @@ class _RealSearchScreenState extends State<RealSearchScreen>
   }
 
   Future<void> _handleBack() async {
-    setState(() => _scanning = false);
+    setState(() {
+      _scanning = false;
+      _detected = false;
+    });
     await _audio.stop();
     if (!mounted) return;
-    Navigator.of(context).maybePop();
+    Navigator.of(context).pop();
   }
 
   @override
@@ -255,7 +258,12 @@ class _RealSearchScreenState extends State<RealSearchScreen>
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
-        await _handleBack();
+        // canPop:false intercepta el botón físico de atrás (Android) para
+        // detener el escaneo antes de salir.
+        final nav = Navigator.of(context);
+        setState(() { _scanning = false; _detected = false; });
+        await _audio.stop();
+        nav.pop();
       },
       child: Scaffold(
         backgroundColor: Colors.black,

@@ -126,6 +126,8 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     }
     setState(() => _isListeningMic = true);
     await _audio.speak('Te escucho.');
+    await Future.delayed(const Duration(milliseconds: 250));
+    if (!mounted) { setState(() => _isListeningMic = false); return; }
     await _stt.startListening(onResult: (text) {
       if (!mounted) return;
       setState(() => _isListeningMic = false);

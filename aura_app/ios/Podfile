@@ -62,6 +62,17 @@ post_install do |installer|
 
       # Necesario para tflite_flutter: evita errores de firma en pods binarios
       config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+
+      # CRÍTICO para permission_handler en iOS: sin estos macros el código de
+      # cada permiso se compila FUERA y request() devuelve "denegado" sin
+      # mostrar el diálogo del sistema (el permiso ni siquiera aparece en
+      # Ajustes). Habilitamos solo los que usa AURA.
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
+        '$(inherited)',
+        'PERMISSION_MICROPHONE=1',
+        'PERMISSION_SPEECH_RECOGNIZER=1',
+        'PERMISSION_CAMERA=1',
+      ]
     end
   end
 end
