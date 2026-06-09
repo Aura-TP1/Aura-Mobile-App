@@ -17,7 +17,14 @@ class ObjectDetector {
   static const double _iouThreshold = 0.45;
 
   Interpreter? _interpreter;
+  IsolateInterpreter? _isolateInterpreter;
   bool _isModelLoaded = false;
+
+  // Output buffer pre-allocado para evitar GC por frame.
+  final List<List<List<double>>> _outputBuffer = List.generate(
+    1,
+    (_) => List.generate(84, (_) => List<double>.filled(_numBoxes, 0.0)),
+  );
 
   bool get isLoaded => _isModelLoaded;
 
@@ -32,6 +39,16 @@ class ObjectDetector {
       debugPrint('Modelo cargado.');
       debugPrint('  Input : ${_interpreter!.getInputTensors().map((t) => t.shape)}');
       debugPrint('  Output: ${_interpreter!.getOutputTensors().map((t) => t.shape)}');
+
+      // Mover inferencia al background isolate para no bloquear la UI.
+      try {
+        _isolateInterpreter = await IsolateInterpreter.create(
+          address: _interpreter!.address,
+        );
+        debugPrint('IsolateInterpreter creado — inferencia en background.');
+      } catch (e) {
+        debugPrint('IsolateInterpreter no disponible, usando main thread: $e');
+      }
     } catch (e, st) {
       debugPrint('Error cargando modelo: $e\n$st');
       _isModelLoaded = false;
@@ -56,14 +73,14 @@ class ObjectDetector {
 
     // Output real del modelo: [1, 84, 2100] — feature-first (transpuesto).
     // Cada columna i es un box; filas 0-3 son cx/cy/w/h, filas 4-83 son scores.
-    final output = List.generate(
-      1,
-      (_) => List.generate(84, (_) => List.filled(_numBoxes, 0.0)),
-    );
+    if (_isolateInterpreter != null) {
+      // Inferencia en background isolate → no bloquea el hilo principal.
+      await _isolateInterpreter!.run(input, _outputBuffer);
+    } else {
+      _interpreter!.run(input, _outputBuffer);
+    }
 
-    _interpreter!.run(input, output);
-
-    return _parseOutput(output[0]);
+    return _parseOutput(_outputBuffer[0]);
   }
 
   // out tiene shape [84][2100]: out[feature][box].
@@ -134,6 +151,8 @@ class ObjectDetector {
   }
 
   void dispose() {
+    _isolateInterpreter?.close();
+    _isolateInterpreter = null;
     _interpreter?.close();
     _interpreter = null;
     _isModelLoaded = false;

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -62,11 +63,28 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   String _statusMessage = 'Inicializando...';
   String? _errorMessage;
 
-  /// Throttle del stream YOLO (≈ 3–4 fps sin sonido de obturador).
-  static const Duration _frameInterval = Duration(milliseconds: 250);
+  // ── BUG 1: Throttle adaptativo ────────────────────────────────────────
+  /// Intervalo base del stream YOLO. Se aumenta automáticamente si el
+  /// dispositivo tarda >200 ms en inferencia (hasta 500 ms).
+  static const Duration _minFrameInterval = Duration(milliseconds: 300);
+  Duration _adaptiveFrameInterval = const Duration(milliseconds: 300);
+  int _slowFrameCount = 0;
 
   /// Intervalo entre capturas OCR (usa takePicture solo 1.5 s, menos molesto).
   static const Duration _ocrInterval = Duration(milliseconds: 1500);
+
+  // ── BUG 2: Anti-repetición OCR/TTS ───────────────────────────────────
+  /// Texto de la última lectura TTS completada.
+  String _lastReadText = '';
+  /// Momento en que terminó la última lectura TTS.
+  DateTime _lastReadAt = DateTime.fromMillisecondsSinceEpoch(0);
+  /// true mientras TTS está leyendo un texto OCR.
+  bool _ocrSpeaking = false;
+  /// Timer de debounce: espera 800 ms de estabilidad antes de leer.
+  Timer? _ocrDebounce;
+
+  static const Duration _ocrDebounceDelay = Duration(milliseconds: 800);
+  static const Duration _ocrReadCooldown = Duration(seconds: 3);
 
   // ── Lifecycle ─────────────────────────────────────────────────────────
   @override
@@ -121,6 +139,7 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _streamActive = false;
+    _ocrDebounce?.cancel();
     if (_usingStream) {
       try { _controller?.stopImageStream(); } catch (_) {}
       _usingStream = false;
@@ -265,14 +284,18 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     if (!_streamActive || _mode != CamMode.yolo || _isDetecting) return;
 
     final now = DateTime.now();
-    if (now.difference(_lastStreamFrameAt) < _frameInterval) return;
+    if (now.difference(_lastStreamFrameAt) < _adaptiveFrameInterval) return;
     _lastStreamFrameAt = now;
 
     _isDetecting = true;
     final image = _convertCameraImage(frame);
     if (image == null) { _isDetecting = false; return; }
 
+    final inferenceStart = DateTime.now();
     _detector.detect(image).then((dets) {
+      final inferenceMs = DateTime.now().difference(inferenceStart).inMilliseconds;
+      _updateAdaptiveInterval(inferenceMs);
+
       _isDetecting = false;
       if (!mounted || !_streamActive) return;
 
@@ -302,6 +325,30 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
       _isDetecting = false;
       debugPrint('Error en detección stream: $e');
     });
+  }
+
+  /// Ajusta automáticamente el intervalo entre frames según la velocidad de
+  /// inferencia. >200 ms por 3 frames consecutivos → aumenta hasta 500 ms.
+  void _updateAdaptiveInterval(int inferenceMs) {
+    if (inferenceMs > 200) {
+      _slowFrameCount++;
+      if (_slowFrameCount >= 3) {
+        final newMs = (_adaptiveFrameInterval.inMilliseconds + 100).clamp(
+          _minFrameInterval.inMilliseconds, 500,
+        );
+        _adaptiveFrameInterval = Duration(milliseconds: newMs);
+        _slowFrameCount = 0;
+      }
+    } else {
+      _slowFrameCount = 0;
+      // Recuperar intervalo base cuando el dispositivo vuelve a ser rápido.
+      if (_adaptiveFrameInterval > _minFrameInterval) {
+        final newMs = (_adaptiveFrameInterval.inMilliseconds - 50).clamp(
+          _minFrameInterval.inMilliseconds, 500,
+        );
+        _adaptiveFrameInterval = Duration(milliseconds: newMs);
+      }
+    }
   }
 
   bool _hasNewLabel(List<String> newLabels, List<String> oldLabels) {
@@ -400,11 +447,13 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
       } finally {
         _isDetecting = false;
       }
-      await Future.delayed(_mode == CamMode.ocr ? _ocrInterval : _frameInterval);
+      await Future.delayed(_mode == CamMode.ocr ? _ocrInterval : _adaptiveFrameInterval);
     }
   }
 
   /// Procesa un frame en modo lectura de texto (OCR).
+  /// Aplica debounce (800 ms) para esperar estabilidad del dispositivo
+  /// antes de intentar una lectura TTS.
   Future<void> _processOcr(XFile xfile) async {
     final text = await _ocr.recognize(xfile.path);
     if (!mounted) return;
@@ -412,14 +461,34 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
       setState(() => _statusMessage = 'Acerca la cámara al texto...');
       return;
     }
-    // Solo leer en voz alta cuando el texto cambia, para no repetir.
-    if (text != _ocrText) {
-      setState(() {
-        _ocrText = text;
-        _statusMessage = 'Leyendo texto';
-      });
-      _audio.speak(text);
-    }
+
+    // Actualizar texto mostrado en pantalla de inmediato.
+    setState(() => _ocrText = text);
+
+    // Reiniciar debounce: solo proceder si el texto no cambia en 800 ms.
+    _ocrDebounce?.cancel();
+    _ocrDebounce = Timer(_ocrDebounceDelay, () => _tryReadOcrText(text));
+  }
+
+  /// Intenta leer el texto en voz alta con todos los guards activos:
+  /// - No interrumpir lectura en curso (_ocrSpeaking)
+  /// - Solo si el texto es diferente al último leído (_lastReadText)
+  /// - Cooldown de 3 s tras finalizar una lectura (_ocrReadCooldown)
+  void _tryReadOcrText(String text) {
+    if (!mounted || !_streamActive) return;
+    if (_ocrSpeaking) return;
+    if (text == _lastReadText) return;
+    if (DateTime.now().difference(_lastReadAt) < _ocrReadCooldown) return;
+
+    _ocrSpeaking = true;
+    _lastReadText = text;
+    setState(() => _statusMessage = 'Leyendo texto...');
+
+    _audio.speak(text).then((_) {
+      _ocrSpeaking = false;
+      _lastReadAt = DateTime.now();
+      if (mounted) setState(() => _statusMessage = 'Modo lectura de texto.');
+    });
   }
 
   /// Cambia entre modo YOLO y OCR. Detiene el mecanismo anterior (stream o
@@ -431,11 +500,15 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     // Para limpiamente el modo anterior antes de cambiar.
     if (wasActive) _stopDetection();
 
+    _ocrDebounce?.cancel();
     setState(() {
       _mode = mode;
       _detections = [];
       _ocrText = '';
       _lastDetectedLabels = const [];
+      _ocrSpeaking = false;
+      _lastReadText = '';
+      _lastReadAt = DateTime.fromMillisecondsSinceEpoch(0);
       _statusMessage = mode == CamMode.ocr
           ? 'Modo lectura de texto.'
           : 'Modo detección de objetos.';
@@ -529,15 +602,22 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   }
 
   Widget _buildPlaceholder() {
+    final isLoading = _errorMessage == null;
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            _errorMessage != null ? Icons.videocam_off : Icons.hourglass_top,
-            color: Colors.white38,
-            size: 64,
-          ),
+          if (isLoading)
+            const SizedBox(
+              width: 48,
+              height: 48,
+              child: CircularProgressIndicator(
+                color: Colors.white38,
+                strokeWidth: 3,
+              ),
+            )
+          else
+            const Icon(Icons.videocam_off, color: Colors.white38, size: 64),
           const SizedBox(height: 16),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 32),
