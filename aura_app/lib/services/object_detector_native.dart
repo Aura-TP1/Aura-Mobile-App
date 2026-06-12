@@ -13,6 +13,7 @@ class ObjectDetector {
   static const int inputSize = 320;
   static const int _numClasses = 80;
   static const int _numBoxes = 2100;
+  static const int _numFeatures = 84; // 4 coords (cx,cy,w,h) + 80 clases
   static const double _confThreshold = 0.4;
   static const double _iouThreshold = 0.45;
 
@@ -20,11 +21,13 @@ class ObjectDetector {
   IsolateInterpreter? _isolateInterpreter;
   bool _isModelLoaded = false;
 
-  // Output buffer pre-allocado para evitar GC por frame.
-  final List<List<List<double>>> _outputBuffer = List.generate(
-    1,
-    (_) => List.generate(84, (_) => List<double>.filled(_numBoxes, 0.0)),
-  );
+  // Buffers de entrada/salida pre-allocados y reutilizados en cada frame.
+  // Usar Float32List en vez de List<List<List<double>>> evita crear
+  // decenas de miles de objetos Dart por frame (y su copia profunda al
+  // enviarlos al isolate de inferencia), lo cual es clave para que la
+  // detección funcione sin saturar la memoria en celulares de 4 GB de RAM.
+  final Float32List _inputBuffer = Float32List(inputSize * inputSize * 3);
+  final Float32List _outputBuffer = Float32List(_numFeatures * _numBoxes);
 
   bool get isLoaded => _isModelLoaded;
 
@@ -33,7 +36,10 @@ class ObjectDetector {
       debugPrint('Cargando YOLOv8n...');
       _interpreter = await Interpreter.fromAsset(
         'assets/yolov8n_float32.tflite',
-        options: InterpreterOptions()..threads = 4,
+        // 2 hilos: en equipos de gama baja con 4 GB de RAM (típicamente
+        // 4-8 núcleos compartidos con la UI), usar más hilos compite con
+        // el hilo principal y no acelera la inferencia de forma notable.
+        options: InterpreterOptions()..threads = 2,
       );
       _isModelLoaded = true;
       debugPrint('Modelo cargado.');
@@ -60,40 +66,36 @@ class ObjectDetector {
 
     final resized = img.copyResize(image, width: inputSize, height: inputSize);
 
-    final input = List.generate(
-      1,
-      (_) => List.generate(
-        inputSize,
-        (y) => List.generate(inputSize, (x) {
-          final p = resized.getPixel(x, y);
-          return [p.r / 255.0, p.g / 255.0, p.b / 255.0];
-        }),
-      ),
-    );
+    // Lectura directa de los bytes RGB del buffer redimensionado: evita
+    // ~100k llamadas a getPixel() (y sus objetos Pixel) por frame.
+    final bytes = resized.getBytes(order: img.ChannelOrder.rgb);
+    for (int i = 0; i < bytes.length; i++) {
+      _inputBuffer[i] = bytes[i] / 255.0;
+    }
 
     // Output real del modelo: [1, 84, 2100] — feature-first (transpuesto).
     // Cada columna i es un box; filas 0-3 son cx/cy/w/h, filas 4-83 son scores.
     if (_isolateInterpreter != null) {
       // Inferencia en background isolate → no bloquea el hilo principal.
-      await _isolateInterpreter!.run(input, _outputBuffer);
+      await _isolateInterpreter!.run(_inputBuffer.buffer, _outputBuffer.buffer);
     } else {
-      _interpreter!.run(input, _outputBuffer);
+      _interpreter!.run(_inputBuffer.buffer, _outputBuffer.buffer);
     }
 
-    return _parseOutput(_outputBuffer[0]);
+    return _parseOutput(_outputBuffer);
   }
 
-  // out tiene shape [84][2100]: out[feature][box].
+  // out es un Float32List plano de tamaño [84 * 2100]: out[feature * 2100 + box].
   // Filas 0-3: cx, cy, w, h en píxeles del espacio 320×320.
   // Filas 4-83: score de cada clase COCO.
-  List<Detection> _parseOutput(List<List<double>> out) {
+  List<Detection> _parseOutput(Float32List out) {
     final detections = <Detection>[];
 
     for (int i = 0; i < _numBoxes; i++) {
       double maxConf = 0;
       int classId = 0;
       for (int c = 0; c < _numClasses; c++) {
-        final v = out[4 + c][i];
+        final v = out[(4 + c) * _numBoxes + i];
         if (v > maxConf) {
           maxConf = v;
           classId = c;
@@ -103,10 +105,10 @@ class ObjectDetector {
       if (maxConf < _confThreshold) continue;
 
       // Coordenadas en píxeles del espacio del modelo → normalizar a [0, 1].
-      final cx = out[0][i] / inputSize;
-      final cy = out[1][i] / inputSize;
-      final w  = out[2][i] / inputSize;
-      final h  = out[3][i] / inputSize;
+      final cx = out[0 * _numBoxes + i] / inputSize;
+      final cy = out[1 * _numBoxes + i] / inputSize;
+      final w  = out[2 * _numBoxes + i] / inputSize;
+      final h  = out[3 * _numBoxes + i] / inputSize;
 
       detections.add(
         Detection(

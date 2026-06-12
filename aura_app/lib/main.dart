@@ -7,16 +7,21 @@ import 'screens/camera_detection_view.dart';
 import 'screens/save_object_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/help_screen.dart';
+import 'services/app_settings.dart';
 
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
+  // Cargar preferencias (velocidad de voz, volumen, tamaño de letra) antes
+  // de construir la UI por primera vez.
+  await AppSettings.instance.load();
+
   // Forzar orientación vertical
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
   ]);
-  
+
   runApp(const AuraApp());
 }
 
@@ -25,35 +30,51 @@ class AuraApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'AURA',
-      debugShowCheckedModeBanner: false,
-      
-      // Tema
-      theme: ThemeData(
-        useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFFAFAFA),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.white,
-          elevation: 0,
-          iconTheme: IconThemeData(color: Colors.black),
-          titleTextStyle: TextStyle(
-            color: Colors.black,
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
+    return AnimatedBuilder(
+      animation: AppSettings.instance,
+      builder: (context, _) {
+        return MaterialApp(
+          title: 'AURA',
+          debugShowCheckedModeBanner: false,
+
+          // Tema
+          theme: ThemeData(
+            useMaterial3: true,
+            scaffoldBackgroundColor: const Color(0xFFFAFAFA),
+            appBarTheme: const AppBarTheme(
+              backgroundColor: Colors.white,
+              elevation: 0,
+              iconTheme: IconThemeData(color: Colors.black),
+              titleTextStyle: TextStyle(
+                color: Colors.black,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
-        ),
-      ),
-      
-      // Rutas nombradas
-      routes: {
-        '/': (context) => const HomeScreen(),
-        '/search': (context) => const SearchObjectScreen(),
-        '/camera': (context) => const CameraDetectionView(),
-        '/my-objects': (context) => const MyObjectsScreen(),
-        '/save-object': (context) => const SaveObjectScreen(),
-        '/settings': (context) => const SettingsScreen(),
-        '/help': (context) => const HelpScreen(),
+
+          // Aplica el tamaño de letra elegido en Ajustes a toda la app.
+          builder: (context, child) {
+            final mediaQuery = MediaQuery.of(context);
+            return MediaQuery(
+              data: mediaQuery.copyWith(
+                textScaler: TextScaler.linear(AppSettings.instance.fontScale),
+              ),
+              child: child!,
+            );
+          },
+
+          // Rutas nombradas
+          routes: {
+            '/': (context) => const HomeScreen(),
+            '/search': (context) => const SearchObjectScreen(),
+            '/camera': (context) => const CameraDetectionView(),
+            '/my-objects': (context) => const MyObjectsScreen(),
+            '/save-object': (context) => const SaveObjectScreen(),
+            '/settings': (context) => const SettingsScreen(),
+            '/help': (context) => const HelpScreen(),
+          },
+        );
       },
     );
   }

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../services/app_settings.dart';
+import '../services/tts.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -8,10 +10,28 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  double _voiceSpeed = 1.0;
-  double _volume = 0.8;
-  bool _darkMode = true;
+  final AudioFeedback _audio = AudioFeedback();
+
+  late double _voiceSpeed;
+  late double _volume;
+  late double _fontScale;
   final String _appVersion = '7.1.0 (VISTA)';
+
+  @override
+  void initState() {
+    super.initState();
+    _voiceSpeed = AppSettings.instance.voiceSpeed;
+    _volume = AppSettings.instance.volume;
+    _fontScale = AppSettings.instance.fontScale;
+    _audio.init();
+  }
+
+  @override
+  void dispose() {
+    _audio.stop();
+    _audio.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -118,6 +138,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         divisions: 6,
                         onChanged: (value) {
                           setState(() => _voiceSpeed = value);
+                          AppSettings.instance.setVoiceSpeed(value);
+                        },
+                        onChangeEnd: (_) {
+                          _audio.speak('Así sonará mi voz');
                         },
                         activeColor: const Color(0xFF2196F3),
                         inactiveColor: Colors.white.withOpacity( 0.1),
@@ -162,6 +186,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         max: 1.0,
                         onChanged: (value) {
                           setState(() => _volume = value);
+                          AppSettings.instance.setVolume(value);
+                        },
+                        onChangeEnd: (_) {
+                          _audio.speak('Así de fuerte se escuchará');
                         },
                         activeColor: const Color(0xFF2196F3),
                         inactiveColor: Colors.white.withOpacity( 0.1),
@@ -187,7 +215,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           const Row(
             children: [
-              Icon(Icons.palette, color: Colors.white70, size: 20),
+              Icon(Icons.text_fields, color: Colors.white70, size: 20),
               SizedBox(width: 8),
               Text(
                 'VISUAL',
@@ -201,33 +229,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
           const SizedBox(height: 20),
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity( 0.05),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.white.withOpacity( 0.1)),
-            ),
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Modo Oscuro',
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Tamaño de Letra',
+                style: TextStyle(color: Colors.white, fontSize: 14),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity( 0.05),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.white.withOpacity( 0.1)),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.text_decrease, color: Colors.white70, size: 18),
+                    Expanded(
+                      child: Slider(
+                        value: _fontScale,
+                        min: 0.8,
+                        max: 1.6,
+                        divisions: 8,
+                        onChanged: (value) {
+                          setState(() => _fontScale = value);
+                          AppSettings.instance.setFontScale(value);
+                        },
+                        onChangeEnd: (_) {
+                          _audio.speak('Este es el nuevo tamaño de letra');
+                        },
+                        activeColor: const Color(0xFF2196F3),
+                        inactiveColor: Colors.white.withOpacity( 0.1),
+                      ),
+                    ),
+                    const Icon(Icons.text_increase, color: Colors.white70, size: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${(_fontScale * 100).round()}%',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity( 0.05),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.white.withOpacity( 0.1)),
+                ),
+                padding: const EdgeInsets.all(12),
+                child: const Text(
+                  'Así se ve el texto',
                   style: TextStyle(color: Colors.white, fontSize: 14),
                 ),
-                Transform.scale(
-                  scale: 1.2,
-                  child: Switch(
-                    value: _darkMode,
-                    onChanged: (value) {
-                      setState(() => _darkMode = value);
-                    },
-                    activeThumbColor: const Color(0xFF4CAF50),
-                    activeTrackColor: const Color(0xFF4CAF50).withOpacity( 0.3),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ],
       ),
@@ -242,10 +305,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           const Row(
             children: [
-              Icon(Icons.camera, color: Colors.white70, size: 20),
+              Icon(Icons.help_outline, color: Colors.white70, size: 20),
               SizedBox(width: 8),
               Text(
-                'CÁMARA',
+                'AYUDA',
                 style: TextStyle(
                   color: Colors.white70,
                   fontSize: 14,
@@ -362,4 +425,3 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 }
-

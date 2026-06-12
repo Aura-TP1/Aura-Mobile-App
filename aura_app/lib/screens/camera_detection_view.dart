@@ -84,7 +84,11 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   Timer? _ocrDebounce;
 
   static const Duration _ocrDebounceDelay = Duration(milliseconds: 800);
-  static const Duration _ocrReadCooldown = Duration(seconds: 3);
+  static const Duration _ocrReadCooldown = Duration(seconds: 4);
+
+  /// Pausa entre chequeos mientras se espera a que termine la lectura TTS
+  /// en curso (no se toman fotos nuevas durante ese tiempo).
+  static const Duration _ocrSpeakingPoll = Duration(milliseconds: 300);
 
   // ── Lifecycle ─────────────────────────────────────────────────────────
   @override
@@ -149,6 +153,7 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     _ocr.dispose();
     _stt.stop();
     _audio.stop();
+    _audio.dispose();
     super.dispose();
   }
 
@@ -373,6 +378,11 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     }
   }
 
+  /// Buffer RGB reutilizado entre frames (mismo tamaño de cámara) para
+  /// evitar asignar ~1 MB por frame y reducir la presión sobre el GC en
+  /// equipos con poca RAM.
+  Uint8List? _rgbBuffer;
+
   img.Image _convertYUV420(CameraImage frame) {
     final w = frame.width;
     final h = frame.height;
@@ -383,7 +393,12 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     final uvStride = uPlane.bytesPerRow;
     final uvPixel = uPlane.bytesPerPixel ?? 1;
 
-    final rgb = Uint8List(w * h * 3);
+    final neededSize = w * h * 3;
+    var rgb = _rgbBuffer;
+    if (rgb == null || rgb.length != neededSize) {
+      rgb = Uint8List(neededSize);
+      _rgbBuffer = rgb;
+    }
     int idx = 0;
     for (int y = 0; y < h; y++) {
       for (int x = 0; x < w; x++) {
@@ -418,6 +433,13 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
       if (c == null || !c.value.isInitialized) break;
       if (_isDetecting) {
         await Future.delayed(_ocrInterval);
+        continue;
+      }
+      // Mientras se está leyendo el texto en voz alta, no tomamos fotos
+      // nuevas: dejamos que termine de leer antes de volver a mirar la
+      // cámara (evita relecturas por movimientos de la cámara).
+      if (_mode == CamMode.ocr && _ocrSpeaking) {
+        await Future.delayed(_ocrSpeakingPoll);
         continue;
       }
       _isDetecting = true;
@@ -477,11 +499,14 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   void _tryReadOcrText(String text) {
     if (!mounted || !_streamActive) return;
     if (_ocrSpeaking) return;
-    if (text == _lastReadText) return;
+    // Comparación normalizada: pequeñas variaciones de OCR por el movimiento
+    // de la cámara (espacios, mayúsculas) no deben disparar una relectura.
+    final normalized = _normalizeOcr(text);
+    if (normalized == _lastReadText) return;
     if (DateTime.now().difference(_lastReadAt) < _ocrReadCooldown) return;
 
     _ocrSpeaking = true;
-    _lastReadText = text;
+    _lastReadText = normalized;
     setState(() => _statusMessage = 'Leyendo texto...');
 
     _audio.speak(text).then((_) {
@@ -490,6 +515,9 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
       if (mounted) setState(() => _statusMessage = 'Modo lectura de texto.');
     });
   }
+
+  String _normalizeOcr(String text) =>
+      text.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
 
   /// Cambia entre modo YOLO y OCR. Detiene el mecanismo anterior (stream o
   /// bucle), actualiza el estado y reinicia si estaba activo.

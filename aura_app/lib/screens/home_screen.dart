@@ -13,8 +13,9 @@ const String _kMenuSpeech =
     'o Toca para hablar.';
 const String _kWelcomeSpeech = 'Hola, soy AURA. ¿Qué necesitas? $_kMenuSpeech';
 
-/// Cada cuánto recordar el menú si el usuario está inactivo.
-const Duration _kReminderInterval = Duration(seconds: 25);
+/// Cada cuánto recordar el menú si el usuario está inactivo. A lo mucho una
+/// vez por minuto, para no resultar repetitivo.
+const Duration _kReminderInterval = Duration(minutes: 1);
 
 /// Ventana de gracia para no pisar la voz del usuario después de tocar algo.
 const Duration _kUserActionGrace = Duration(seconds: 8);
@@ -51,6 +52,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _reminderTimer?.cancel();
     _stt.stop();
     _audio.stop();
+    _audio.dispose();
     super.dispose();
   }
 

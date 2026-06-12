@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:vibration/vibration.dart';
 
+import 'app_settings.dart';
+
 /// Envoltorio simple sobre flutter_tts con cola anti‑repetición y feedback
 /// háptico. Diseñado para una experiencia "voice-first" para adultos mayores.
 class AudioFeedback {
@@ -28,11 +30,24 @@ class AudioFeedback {
     await _tts.setLanguage('es-PE');
     // Esperar a que termine cada locución evita que las siguientes la pisen.
     await _tts.awaitSpeakCompletion(true);
-    // 0.45 ≈ 0.85x del ritmo normal en flutter_tts (0.5 = normal en Android):
-    // claro y pausado para adultos mayores.
-    await _tts.setSpeechRate(0.45);
-    await _tts.setVolume(1.0);
     await _tts.setPitch(1.0);
+    // Velocidad y volumen vienen de Ajustes (persistidos). 0.45 ≈ 0.85x del
+    // ritmo normal en flutter_tts: claro y pausado para adultos mayores.
+    await _applySettings();
+    // Si el usuario cambia velocidad/volumen en Ajustes, se aplica de
+    // inmediato a esta instancia, aunque ya esté inicializada.
+    AppSettings.instance.addListener(_applySettings);
+  }
+
+  Future<void> _applySettings() async {
+    await _tts.setSpeechRate(AppSettings.instance.ttsRate);
+    await _tts.setVolume(AppSettings.instance.volume);
+  }
+
+  /// Quita el listener de [AppSettings]. Llamar desde el `dispose()` de la
+  /// pantalla que creó esta instancia.
+  void dispose() {
+    AppSettings.instance.removeListener(_applySettings);
   }
 
   /// Habla un texto arbitrario, cancelando lo anterior. Para instrucciones y

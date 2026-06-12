@@ -15,24 +15,41 @@ class _HelpScreenState extends State<HelpScreen> {
 
   final List<Map<String, String>> _steps = [
     {
+      'step': 'BIENVENIDA',
+      'title': '¿Qué es AURA?',
+      'description': 'AURA es tu asistente. Te ayuda a encontrar objetos, '
+          'leer textos en voz alta y recordar dónde dejaste tus cosas. '
+          'Puedes usarla tocando los botones grandes, o hablando.',
+    },
+    {
       'step': 'PASO 1',
-      'title': 'Apunta tu cámara',
-      'description': 'Asegúrate de que la cámara esté apuntando hacia los objetos que deseas detectar. Mantén una buena iluminación para mejores resultados.',
+      'title': 'Encontrar objeto y Leer texto',
+      'description': 'Con el botón Encontrar objeto, la cámara te dice qué '
+          'cosas ve. Con el botón Leer texto, la cámara lee en voz alta lo '
+          'que esté escrito, como una carta o una etiqueta.',
     },
     {
       'step': 'PASO 2',
-      'title': 'Escucha la descripción',
-      'description': 'La aplicación te describirá verbalmente los objetos que detecte. También verás un recuadro con información en pantalla.',
+      'title': 'Buscar objeto y Mis objetos',
+      'description': 'Con el botón Buscar objeto puedes pedirle a AURA que '
+          'te ayude a encontrar algo. Con el botón Mis objetos puedes ver '
+          'la lista de las cosas que ya guardaste antes.',
     },
     {
       'step': 'PASO 3',
-      'title': 'Controla la detección',
-      'description': 'Usa los botones de Pausa/Reproducir para controlar la detección. Presiona Reset para limpiar y Guardar para registrar detecciones.',
+      'title': 'Habla con AURA',
+      'description': 'Toca el botón Toca para hablar y di lo que quieres. '
+          'Por ejemplo: "Aura, qué ves", "Aura, lee", "Aura, busca mis '
+          'llaves", "Aura, guarda esto como mis llaves", o "Aura, para" '
+          'para detener.',
     },
     {
       'step': 'PASO 4',
-      'title': 'Consejos útiles',
-      'description': 'Mantén una distancia adecuada de los objetos. Evita luz directa en la cámara. Si la app es lenta, reduce el brillo de la pantalla.',
+      'title': 'Ajustes y ayuda',
+      'description': 'El ícono de engranaje abre los Ajustes, donde puedes '
+          'cambiar la velocidad de la voz, el volumen y el tamaño de '
+          'letra. El ícono de signo de pregunta abre este tutorial cuando '
+          'lo necesites.',
     },
   ];
 
@@ -40,11 +57,17 @@ class _HelpScreenState extends State<HelpScreen> {
   void initState() {
     super.initState();
     _audio.init();
+    // Lee el primer paso automáticamente al abrir el tutorial.
+    Future.delayed(const Duration(milliseconds: 400), () {
+      if (!mounted) return;
+      _playCurrentStepAudio();
+    });
   }
 
   @override
   void dispose() {
     _audio.stop();
+    _audio.dispose();
     super.dispose();
   }
 
@@ -68,6 +91,7 @@ class _HelpScreenState extends State<HelpScreen> {
         _currentStep++;
         _isPlayingAudio = false;
       });
+      _playCurrentStepAudio();
     }
   }
 
@@ -77,6 +101,7 @@ class _HelpScreenState extends State<HelpScreen> {
         _currentStep--;
         _isPlayingAudio = false;
       });
+      _playCurrentStepAudio();
     }
   }
 
@@ -196,10 +221,11 @@ class _HelpScreenState extends State<HelpScreen> {
 
   Widget _buildStepIcon() {
     final icons = [
+      Icons.front_hand,
       Icons.camera_alt,
-      Icons.volume_up,
-      Icons.videogame_asset,
-      Icons.lightbulb,
+      Icons.folder,
+      Icons.mic,
+      Icons.settings,
     ];
     return Icon(icons[_currentStep], color: Colors.black87, size: 48);
   }
@@ -328,10 +354,7 @@ class _HelpScreenState extends State<HelpScreen> {
           ),
           const SizedBox(height: 16),
           GestureDetector(
-            onTap: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).pushNamed('/camera');
-            },
+            onTap: () => Navigator.of(context).pop(),
             child: Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 14),
@@ -351,11 +374,11 @@ class _HelpScreenState extends State<HelpScreen> {
                   ),
                 ],
               ),
-              child: Row(
+              child: const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
+                children: [
                   Text(
-                    'EMPEZAR TUTORIAL',
+                    'ENTENDIDO, VOLVER',
                     style: TextStyle(
                       color: Colors.black87,
                       fontSize: 14,
@@ -364,7 +387,7 @@ class _HelpScreenState extends State<HelpScreen> {
                     ),
                   ),
                   SizedBox(width: 8),
-                  Icon(Icons.arrow_forward, color: Colors.black87, size: 18),
+                  Icon(Icons.check, color: Colors.black87, size: 18),
                 ],
               ),
             ),

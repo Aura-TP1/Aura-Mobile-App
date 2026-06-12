@@ -77,6 +77,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
     _stt.stop();
     _pulseController.dispose();
     _audio.stop();
+    _audio.dispose();
     super.dispose();
   }
 

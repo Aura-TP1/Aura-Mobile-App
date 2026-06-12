@@ -247,6 +247,7 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     _camera?.dispose();
     _embeddings.dispose();
     _audio.stop();
+    _audio.dispose();
     super.dispose();
   }
 

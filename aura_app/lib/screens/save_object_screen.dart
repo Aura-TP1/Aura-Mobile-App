@@ -112,6 +112,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     _camera?.dispose();
     _embeddings.dispose();
     _audio.stop();
+    _audio.dispose();
     _nameController.dispose();
     _nameFocus.dispose();
     super.dispose();
