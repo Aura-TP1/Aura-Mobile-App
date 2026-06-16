@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show ProcessInfo;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -58,6 +59,12 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   List<String> _lastDetectedLabels = const [];
   DateTime _lastHapticAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _lastStreamFrameAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  // ── Métricas de rendimiento en vivo ──────────────────────────────────
+  int _lastFrameMs = 0;
+  double _avgFrameMs = 0;
+  int _ramMb = 0;
+  final List<int> _frameTimes = [];
 
   String _ocrText = '';
   String _statusMessage = 'Inicializando...';
@@ -293,13 +300,14 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     _lastStreamFrameAt = now;
 
     _isDetecting = true;
+    final frameStart = DateTime.now(); // incluye conversión + inferencia
     final image = _convertCameraImage(frame);
     if (image == null) { _isDetecting = false; return; }
 
-    final inferenceStart = DateTime.now();
     _detector.detect(image).then((dets) {
-      final inferenceMs = DateTime.now().difference(inferenceStart).inMilliseconds;
-      _updateAdaptiveInterval(inferenceMs);
+      final frameMs = DateTime.now().difference(frameStart).inMilliseconds;
+      _updateAdaptiveInterval(frameMs);
+      _updatePerfMetrics(frameMs);
 
       _isDetecting = false;
       if (!mounted || !_streamActive) return;
@@ -354,6 +362,17 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
         _adaptiveFrameInterval = Duration(milliseconds: newMs);
       }
     }
+  }
+
+  void _updatePerfMetrics(int frameMs) {
+    _frameTimes.add(frameMs);
+    if (_frameTimes.length > 50) _frameTimes.removeAt(0);
+    _lastFrameMs = frameMs;
+    _avgFrameMs = _frameTimes.reduce((a, b) => a + b) / _frameTimes.length;
+    try {
+      _ramMb = ProcessInfo.currentRss ~/ (1024 * 1024);
+    } catch (_) {}
+    // El setState que ya existe en el .then() de detect() actualiza la UI.
   }
 
   bool _hasNewLabel(List<String> newLabels, List<String> oldLabels) {
@@ -606,6 +625,8 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
             else
               _buildPlaceholder(),
             if (_isInitialized && _detections.isNotEmpty) _buildDetectionOverlay(),
+            if (_streamActive && _mode == CamMode.yolo && _lastFrameMs > 0)
+              _buildPerfOverlay(),
             _buildTopBar(),
             Positioned(
               bottom: 0,
@@ -670,6 +691,41 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
           ),
         );
       },
+    );
+  }
+
+  Widget _buildPerfOverlay() {
+    final fps = _lastFrameMs > 0 ? 1000 / _lastFrameMs : 0.0;
+    final avgFps = _avgFrameMs > 0 ? 1000 / _avgFrameMs : 0.0;
+    return Positioned(
+      top: 72,
+      left: 12,
+      child: IgnorePointer(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.65),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: DefaultTextStyle(
+            style: const TextStyle(
+              color: Colors.greenAccent,
+              fontSize: 11,
+              fontFamily: 'monospace',
+              height: 1.6,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Frame  ${_lastFrameMs} ms  ${fps.toStringAsFixed(1)} fps'),
+                Text('Avg50  ${_avgFrameMs.toStringAsFixed(1)} ms  ${avgFps.toStringAsFixed(1)} fps'),
+                Text('RAM    ${_ramMb} MB'),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
