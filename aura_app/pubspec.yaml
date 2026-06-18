@@ -33,7 +33,7 @@ dependencies:
   flutter_tts: ^4.0.2
   
   # Speech-to-Text
-  speech_to_text: ^6.6.0
+  speech_to_text: ^7.4.0
 
   # Vibración
   vibration: ^2.0.0

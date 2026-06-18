@@ -8,6 +8,7 @@ import '../services/embedding_service.dart';
 import '../services/saved_objects_repository.dart';
 import '../services/stt_service.dart';
 import '../services/tts.dart';
+import 'multi_angle_capture_screen.dart' show MultiAngleCaptureScreen, CaptureAngle;
 
 /// Color rojo de marca AURA (mismo que usan search/home).
 const Color _kAuraRed = Color(0xFFE53935);
@@ -143,43 +144,65 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     });
   }
 
-  // ── Guardar ──────────────────────────────────────────────────────────
-  Future<void> _handleSaveTap() async {
-    if (_isSaving) return;
-    final name = _nameController.text.trim();
-    if (name.isEmpty) {
-      await _audio.speak('Escribe o dicta un nombre primero.');
-      return;
-    }
+   // ── Guardar ──────────────────────────────────────────────────────────
+   Future<void> _handleSaveTap() async {
+     if (_isSaving) return;
+     final name = _nameController.text.trim();
+     if (name.isEmpty) {
+       await _audio.speak('Escribe o dicta un nombre primero.');
+       return;
+     }
 
-    setState(() => _isSaving = true);
-    List<double> embedding = const [];
+     setState(() => _isSaving = true);
 
-    try {
-      if (!kIsWeb && _cameraReady && _modelLoaded) {
-        // Una sola captura: para alguien con baja visión, reposicionar la
-        // cámara para varias tomas es confuso. Una foto → un embedding.
-        embedding = await _captureEmbedding();
-      }
-      await _repo.save(SavedObject(
-        name: name,
-        embedding: embedding,
-        createdAt: DateTime.now(),
-      ));
-      await _audio.haptic(200); // confirmación háptica
-      await _audio.speak('Guardé $name.');
-      if (!mounted) return;
-      Navigator.of(context).pop(true);
-    } catch (e) {
-      debugPrint('Error guardando: $e');
-      if (mounted) {
-        setState(() => _isSaving = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al guardar: $e')),
-        );
-      }
-    }
-  }
+     try {
+       List<ObjectEmbedding> embeddings = [];
+
+       if (!kIsWeb && _cameraReady && _modelLoaded) {
+         // Ir a la pantalla de captura multi-ángulo
+         await _audio.speak('Capturaremos el objeto desde diferentes ángulos para mejor reconocimiento.');
+         await Future.delayed(const Duration(seconds: 1));
+
+         if (!mounted) return;
+         final capturedAngles = await Navigator.push<Map<CaptureAngle, List<double>>>(
+           context,
+           MaterialPageRoute(
+             builder: (_) => MultiAngleCaptureScreen(objectName: name),
+           ),
+         );
+
+         if (capturedAngles != null && capturedAngles.isNotEmpty) {
+           // Convertir los ángulos capturados a ObjectEmbedding
+           embeddings = capturedAngles.entries
+               .map((entry) => ObjectEmbedding.create(
+                     embedding: entry.value,
+                     angleDescription: entry.key.label,
+                   ))
+               .toList();
+         }
+       }
+
+       await _repo.save(SavedObject(
+         name: name,
+         embeddings: embeddings,
+         createdAt: DateTime.now(),
+       ));
+       await _audio.haptic(200); // confirmación háptica
+       await _audio.speak('Guardé $name con ${embeddings.length} ángulos capturados.');
+       if (!mounted) return;
+       Navigator.of(context).pop(true);
+     } catch (e) {
+       debugPrint('Error guardando: $e');
+       if (mounted) {
+         setState(() => _isSaving = false);
+         ScaffoldMessenger.of(context).showSnackBar(
+           SnackBar(content: Text('Error al guardar: $e')),
+         );
+       }
+     } finally {
+       if (mounted) setState(() => _isSaving = false);
+     }
+   }
 
   /// Captura una sola foto y extrae su embedding. Sin pedir reposicionar la
   /// cámara: más simple y digno para un usuario con baja visión.
@@ -367,37 +390,37 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     );
   }
 
-  Widget _buildSaveButton() {
-    final String label;
-    if (_isSaving) {
-      label = 'GUARDANDO...';
-    } else if (kIsWeb) {
-      label = 'GUARDAR NOMBRE';
-    } else {
-      label = 'CAPTURAR Y GUARDAR';
-    }
-    return SizedBox(
-      height: _kMinButtonHeight,
-      child: ElevatedButton(
-        onPressed: _isSaving ? null : _handleSaveTap,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: _kAuraRed,
-          disabledBackgroundColor: Colors.grey.shade300,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          elevation: 0,
-        ),
-        child: Text(
-          label,
-          style: const TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-            letterSpacing: 1,
-          ),
-        ),
-      ),
-    );
-  }
+   Widget _buildSaveButton() {
+     final String label;
+     if (_isSaving) {
+       label = 'GUARDANDO...';
+     } else if (kIsWeb) {
+       label = 'GUARDAR NOMBRE';
+     } else {
+       label = 'CAPTURAR DESDE ÁNGULOS';
+     }
+     return SizedBox(
+       height: _kMinButtonHeight,
+       child: ElevatedButton(
+         onPressed: _isSaving ? null : _handleSaveTap,
+         style: ElevatedButton.styleFrom(
+           backgroundColor: _kAuraRed,
+           disabledBackgroundColor: Colors.grey.shade300,
+           shape: RoundedRectangleBorder(
+             borderRadius: BorderRadius.circular(12),
+           ),
+           elevation: 0,
+         ),
+         child: Text(
+           label,
+           style: const TextStyle(
+             fontSize: 20,
+             fontWeight: FontWeight.bold,
+             color: Colors.white,
+             letterSpacing: 1,
+           ),
+         ),
+       ),
+     );
+   }
 }
