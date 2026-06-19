@@ -59,7 +59,10 @@ List<double> averageEmbeddings(List<List<double>> embeddings) {
 
 /// Encuentra el [SavedObject] más similar al [query] en [saved].
 ///
-/// - Ignora objetos cuyo `embedding` esté vacío (p. ej. migrados desde
+/// - Utiliza múltiples embeddings por objeto (si existen) y toma el máximo
+/// - Si existen embeddings nuevos (ObjectEmbedding), los compara todos
+/// - Retrocede al embedding legacy si no hay embeddings nuevos
+/// - Ignora objetos sin ningún embedding (p. ej. migrados desde
 ///   la v1 sin captura, o guardados en web sin ML).
 /// - Devuelve `null` si la mejor similitud no supera [threshold].
 MatchResult? findBestMatch(
@@ -69,13 +72,31 @@ MatchResult? findBestMatch(
 }) {
   if (query.isEmpty || saved.isEmpty) return null;
   MatchResult? best;
+
   for (final obj in saved) {
-    if (obj.embedding.isEmpty) continue;
-    final sim = cosineSimilarity(query, obj.embedding);
-    if (best == null || sim > best.similarity) {
-      best = MatchResult(object: obj, similarity: sim);
+    double bestObjSim = 0.0;
+
+    // Primero intenta con los embeddings nuevos (múltiples ángulos)
+    if (obj.embeddings.isNotEmpty) {
+      for (final objEmb in obj.embeddings) {
+        final sim = cosineSimilarity(query, objEmb.embedding);
+        if (sim > bestObjSim) {
+          bestObjSim = sim;
+        }
+      }
+    }
+
+    // Si no hay embeddings nuevos, usa el embedding legacy
+    if (bestObjSim == 0.0 && obj.embedding.isNotEmpty) {
+      bestObjSim = cosineSimilarity(query, obj.embedding);
+    }
+
+    // Actualiza el mejor match global
+    if (bestObjSim > 0.0 && (best == null || bestObjSim > best.similarity)) {
+      best = MatchResult(object: obj, similarity: bestObjSim);
     }
   }
+
   if (best == null || best.similarity < threshold) return null;
   return best;
 }

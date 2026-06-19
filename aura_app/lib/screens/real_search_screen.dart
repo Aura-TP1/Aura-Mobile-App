@@ -172,15 +172,31 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           continue;
         }
 
-        final sim = cosineSimilarity(widget.savedObject.embedding, frameEmb);
+        // Compara contra TODOS los embeddings disponibles (múltiples ángulos)
+        double bestSim = 0.0;
+        
+        // Primero intenta con los embeddings nuevos (múltiples ángulos)
+        if (widget.savedObject.embeddings.isNotEmpty) {
+          for (final objEmb in widget.savedObject.embeddings) {
+            final sim = cosineSimilarity(objEmb.embedding, frameEmb);
+            if (sim > bestSim) {
+              bestSim = sim;
+            }
+          }
+        }
+        
+        // Si no hay embeddings nuevos, usa el embedding legacy
+        if (bestSim == 0.0 && widget.savedObject.embedding.isNotEmpty) {
+          bestSim = cosineSimilarity(widget.savedObject.embedding, frameEmb);
+        }
 
         if (!mounted || _disposed) return;
-        setState(() => _currentSimilarity = sim);
+        setState(() => _currentSimilarity = bestSim);
 
-        if (sim >= _threshold) {
+        if (bestSim >= _threshold) {
           await _onFound();
           return;
-        } else if (sim >= _kMaybeThreshold) {
+        } else if (bestSim >= _kMaybeThreshold) {
           _announceMaybe();
         }
       } catch (e) {
