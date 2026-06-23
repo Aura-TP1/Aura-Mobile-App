@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../models/saved_object.dart';
+import '../services/app_settings.dart';
+import '../services/backend_service.dart';
+import '../services/google_auth_service.dart';
 import '../services/saved_objects_repository.dart';
 
 /// Pantalla "MIS OBJETOS": lista los objetos personales del usuario
@@ -18,9 +21,12 @@ class MyObjectsScreen extends StatefulWidget {
 
 class _MyObjectsScreenState extends State<MyObjectsScreen> {
   final SavedObjectsRepository _repo = SavedObjectsRepository();
+  final GoogleAuthService _auth = GoogleAuthService();
+  final BackendService _backend = BackendService();
 
   List<SavedObject> _objects = const [];
   bool _loading = true;
+  String? _loadError;
 
   @override
   void initState() {
@@ -29,6 +35,44 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
   }
 
   Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+
+    // Intentar cargar desde el backend solo si la sincronización está habilitada.
+    if (AppSettings.instance.syncEnabled) {
+      // Cargar token de disco si aún no está en memoria (p.ej. reinicio de app).
+      if (_auth.authToken == null) {
+        await _auth.getSavedToken();
+      }
+
+      if (_auth.isAuthenticated) {
+        try {
+          final raw = await _backend.getSyncedObjects();
+          final items = raw
+              .map((e) => SavedObject(
+                    id: e['id'] as int?,
+                    name: e['name'] as String,
+                    embedding: const [],
+                    createdAt: DateTime.tryParse(e['created_at'] ?? '') ??
+                        DateTime.now(),
+                  ))
+              .toList();
+          if (!mounted) return;
+          setState(() {
+            _objects = items;
+            _loading = false;
+          });
+          return;
+        } catch (e) {
+          if (!mounted) return;
+          setState(() => _loadError = 'Error al cargar desde el servidor: $e');
+        }
+      }
+    }
+
+    // Sin sync habilitado, sin sesión o si el backend falló: mostrar objetos locales.
     final items = await _repo.getAll();
     if (!mounted) return;
     setState(() {
@@ -97,6 +141,16 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
             )
           : Column(
               children: [
+                if (_loadError != null)
+                  Container(
+                    width: double.infinity,
+                    color: Colors.red.shade800,
+                    padding: const EdgeInsets.all(12),
+                    child: Text(
+                      _loadError!,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                  ),
                 _buildCounter(),
                 Expanded(child: _buildList()),
               ],

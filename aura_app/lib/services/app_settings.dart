@@ -14,6 +14,7 @@ class AppSettings extends ChangeNotifier {
   static const _kVoiceSpeedKey = 'voice_speed';
   static const _kVolumeKey = 'volume';
   static const _kFontScaleKey = 'font_scale';
+  static const _kSyncEnabledKey = 'sync_enabled';
 
   /// Velocidad de habla base usada antes de aplicar [voiceSpeed].
   static const double _baseRate = 0.45;
@@ -27,6 +28,9 @@ class AppSettings extends ChangeNotifier {
   /// Escala de texto global (1.0 = normal).
   double fontScale = 1.0;
 
+  /// Sincronización en la nube habilitada.
+  bool syncEnabled = false;
+
   bool _loaded = false;
 
   /// Carga los valores guardados. Debe llamarse una vez al inicio (en
@@ -38,6 +42,7 @@ class AppSettings extends ChangeNotifier {
     voiceSpeed = prefs.getDouble(_kVoiceSpeedKey) ?? voiceSpeed;
     volume = prefs.getDouble(_kVolumeKey) ?? volume;
     fontScale = prefs.getDouble(_kFontScaleKey) ?? fontScale;
+    syncEnabled = prefs.getBool(_kSyncEnabledKey) ?? syncEnabled;
   }
 
   /// Velocidad efectiva para `flutter_tts`, derivada de [voiceSpeed].
@@ -62,5 +67,12 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_kFontScaleKey, value);
+  }
+
+  Future<void> setSyncEnabled(bool value) async {
+    syncEnabled = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kSyncEnabledKey, value);
   }
 }

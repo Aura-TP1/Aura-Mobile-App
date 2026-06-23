@@ -1,10 +1,15 @@
+import 'dart:convert';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 
 import '../models/saved_object.dart';
+import '../services/app_settings.dart';
+import '../services/backend_service.dart';
 import '../services/embedding_service.dart';
+import '../services/google_auth_service.dart';
 import '../services/saved_objects_repository.dart';
 import '../services/stt_service.dart';
 import '../services/tts.dart';
@@ -37,6 +42,8 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
   final SavedObjectsRepository _repo = SavedObjectsRepository();
   final EmbeddingService _embeddings = EmbeddingService();
   final SttService _stt = SttService();
+  final GoogleAuthService _auth = GoogleAuthService();
+  final BackendService _backend = BackendService();
 
   final TextEditingController _nameController = TextEditingController();
   final FocusNode _nameFocus = FocusNode();
@@ -182,11 +189,36 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
          }
        }
 
-       await _repo.save(SavedObject(
+       final obj = SavedObject(
          name: name,
          embeddings: embeddings,
          createdAt: DateTime.now(),
-       ));
+       );
+
+       // Guardar localmente siempre
+       await _repo.save(obj);
+
+       // Subir al backend si la sync está habilitada y hay sesión activa
+       if (AppSettings.instance.syncEnabled && _auth.isAuthenticated) {
+         try {
+           final embeddingBase64 = base64Encode(
+             utf8.encode(jsonEncode(embeddings.map((e) => e.toJson()).toList())),
+           );
+           await _backend.syncObjectsUpload([
+             {
+               'id': obj.id,
+               'name': obj.name,
+               'embedding': embeddingBase64,
+               'thumbnail': null,
+               'created_at': obj.createdAt.toIso8601String(),
+             }
+           ]);
+         } catch (e) {
+           // Fallo silencioso: el objeto ya está guardado localmente
+           debugPrint('Advertencia: no se pudo sincronizar con el backend: $e');
+         }
+       }
+
        await _audio.haptic(200); // confirmación háptica
        await _audio.speak('Guardé $name con ${embeddings.length} ángulos capturados.');
        if (!mounted) return;
