@@ -7,17 +7,19 @@
 ///   desde diferentes ángulos para mejor reconocimiento.
 /// - [createdAt] es la fecha de guardado; se usa para ordenar y mostrar en UI.
 class SavedObject {
+  final int id;
   final String name;
   final List<double> embedding; // Retrocompatibilidad
   final List<ObjectEmbedding> embeddings;
   final DateTime createdAt;
 
-  const SavedObject({
+  SavedObject({
+    int? id,
     required this.name,
     this.embedding = const [],
     this.embeddings = const [],
     required this.createdAt,
-  });
+  }) : id = id ?? createdAt.millisecondsSinceEpoch ~/ 1000;
 
   bool get hasEmbedding => embedding.isNotEmpty || embeddings.isNotEmpty;
 
@@ -30,6 +32,7 @@ class SavedObject {
   }
 
   Map<String, dynamic> toJson() => {
+        'id': id,
         'name': name,
         'embedding': embedding,
         'embeddings': embeddings.map((e) => e.toJson()).toList(),
@@ -50,6 +53,7 @@ class SavedObject {
     }
 
     return SavedObject(
+      id: json['id'] as int?,
       name: (json['name'] as String?) ?? '',
       embedding: parsed,
       embeddings: embeddingsList,
@@ -59,12 +63,14 @@ class SavedObject {
   }
 
   SavedObject copyWith({
+    int? id,
     String? name,
     List<double>? embedding,
     List<ObjectEmbedding>? embeddings,
     DateTime? createdAt,
   }) {
     return SavedObject(
+      id: id ?? this.id,
       name: name ?? this.name,
       embedding: embedding ?? this.embedding,
       embeddings: embeddings ?? this.embeddings,
@@ -80,12 +86,10 @@ class ObjectEmbedding {
   final DateTime capturedAt;
 
   const ObjectEmbedding({
-    required List<double> embedding,
-    required String angleDescription,
-    required DateTime capturedAt,
-  })  : embedding = embedding,
-        angleDescription = angleDescription,
-        capturedAt = capturedAt;
+    required this.embedding,
+    required this.angleDescription,
+    required this.capturedAt,
+  });
 
   // Factory constructor para crear con DateTime.now()
   factory ObjectEmbedding.create({

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'config/app_config.dart';
 import 'screens/home_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/my_objects.dart';
@@ -36,6 +37,7 @@ class AuraApp extends StatelessWidget {
         return MaterialApp(
           title: 'AURA',
           debugShowCheckedModeBanner: false,
+          navigatorKey: AppConfig.navigatorKey,
 
           // Tema
           theme: ThemeData(
