@@ -66,6 +66,23 @@ class SavedObjectsRepository {
     await _writeAll(prefs, current);
   }
 
+  /// Mezcla [incoming] con los objetos locales (upsert por nombre).
+  /// Mucho más eficiente que llamar [save] en loop: lee y escribe una sola vez.
+  Future<void> mergeAll(List<SavedObject> incoming) async {
+    final prefs = await SharedPreferences.getInstance();
+    final current = await getAll();
+    for (final obj in incoming) {
+      final key = obj.name.trim().toLowerCase();
+      final idx = current.indexWhere((o) => o.name.trim().toLowerCase() == key);
+      if (idx >= 0) {
+        current[idx] = obj;
+      } else {
+        current.add(obj);
+      }
+    }
+    await _writeAll(prefs, current);
+  }
+
   /// Solo para debugging / pantalla de settings futura.
   Future<void> clear() async {
     final prefs = await SharedPreferences.getInstance();

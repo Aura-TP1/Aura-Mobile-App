@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../models/saved_object.dart';
@@ -50,18 +52,43 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
       if (_auth.isAuthenticated) {
         try {
           final raw = await _backend.getSyncedObjects();
-          final items = raw
-              .map((e) => SavedObject(
-                    id: e['id'] as int?,
-                    name: e['name'] as String,
-                    embedding: const [],
-                    createdAt: DateTime.tryParse(e['created_at'] ?? '') ??
-                        DateTime.now(),
-                  ))
-              .toList();
+          final cloudObjects = <SavedObject>[];
+
+          for (final e in raw) {
+            // Decodificar base64 → bytes → JSON → List<ObjectEmbedding>
+            List<ObjectEmbedding> embeddings = const [];
+            final embeddingB64 = e['embedding'] as String?;
+            if (embeddingB64 != null && embeddingB64.isNotEmpty) {
+              try {
+                final bytes = base64Decode(embeddingB64);
+                final jsonList = jsonDecode(utf8.decode(bytes)) as List<dynamic>;
+                embeddings = jsonList
+                    .map((item) => ObjectEmbedding.fromJson(
+                        item as Map<String, dynamic>))
+                    .toList();
+              } catch (decodeErr) {
+                debugPrint(
+                    'Embedding de "${e['name']}" no decodificable: $decodeErr');
+              }
+            }
+
+            cloudObjects.add(SavedObject(
+              id: e['id'] as int?,
+              name: e['name'] as String,
+              embeddings: embeddings,
+              createdAt:
+                  DateTime.tryParse(e['created_at'] ?? '') ?? DateTime.now(),
+            ));
+          }
+
+          // Persistir localmente para que el reconocimiento funcione sin conexión.
+          if (cloudObjects.isNotEmpty) {
+            await _repo.mergeAll(cloudObjects);
+          }
+
           if (!mounted) return;
           setState(() {
-            _objects = items;
+            _objects = cloudObjects;
             _loading = false;
           });
           return;
