@@ -12,3 +12,5 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+# Excepción: keystore compartido de desarrollo (solo SHA-1 de debug registrado en Google Console)
+!**/team_debug.keystore
