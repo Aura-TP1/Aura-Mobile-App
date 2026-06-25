@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../models/saved_object.dart';
-import '../services/app_settings.dart';
 import '../services/backend_service.dart';
 import '../services/google_auth_service.dart';
 import '../services/saved_objects_repository.dart';
@@ -42,64 +41,63 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
       _loadError = null;
     });
 
-    // Intentar cargar desde el backend solo si la sincronización está habilitada.
-    if (AppSettings.instance.syncEnabled) {
-      // Cargar token de disco si aún no está en memoria (p.ej. reinicio de app).
-      if (_auth.authToken == null) {
-        await _auth.getSavedToken();
-      }
+    // Cargar token de disco si aún no está en memoria (p.ej. reinicio de app).
+    if (_auth.authToken == null) {
+      await _auth.getSavedToken();
+    }
 
-      if (_auth.isAuthenticated) {
-        try {
-          final raw = await _backend.getSyncedObjects();
-          final cloudObjects = <SavedObject>[];
+    // Si el usuario está autenticado, siempre descargar desde el backend
+    // (independientemente del toggle de sync, que solo controla las subidas).
+    if (_auth.isAuthenticated) {
+      try {
+        final raw = await _backend.getSyncedObjects();
+        final cloudObjects = <SavedObject>[];
 
-          for (final e in raw) {
-            // Decodificar base64 → bytes → JSON → List<ObjectEmbedding>
-            List<ObjectEmbedding> embeddings = const [];
-            final embeddingB64 = e['embedding'] as String?;
-            if (embeddingB64 != null && embeddingB64.isNotEmpty) {
-              try {
-                final bytes = base64Decode(embeddingB64);
-                final jsonList = jsonDecode(utf8.decode(bytes)) as List<dynamic>;
-                embeddings = jsonList
-                    .map((item) => ObjectEmbedding.fromJson(
-                        item as Map<String, dynamic>))
-                    .toList();
-              } catch (decodeErr) {
-                debugPrint(
-                    'Embedding de "${e['name']}" no decodificable: $decodeErr');
-              }
+        for (final e in raw) {
+          // Decodificar base64 → bytes → JSON → List<ObjectEmbedding>
+          List<ObjectEmbedding> embeddings = const [];
+          final embeddingB64 = e['embedding'] as String?;
+          if (embeddingB64 != null && embeddingB64.isNotEmpty) {
+            try {
+              final bytes = base64Decode(embeddingB64);
+              final jsonList = jsonDecode(utf8.decode(bytes)) as List<dynamic>;
+              embeddings = jsonList
+                  .map((item) => ObjectEmbedding.fromJson(
+                      item as Map<String, dynamic>))
+                  .toList();
+            } catch (decodeErr) {
+              debugPrint(
+                  'Embedding de "${e['name']}" no decodificable: $decodeErr');
             }
-
-            cloudObjects.add(SavedObject(
-              id: e['id'] as int?,
-              name: e['name'] as String,
-              embeddings: embeddings,
-              createdAt:
-                  DateTime.tryParse(e['created_at'] ?? '') ?? DateTime.now(),
-            ));
           }
 
-          // Persistir localmente para que el reconocimiento funcione sin conexión.
-          if (cloudObjects.isNotEmpty) {
-            await _repo.mergeAll(cloudObjects);
-          }
-
-          if (!mounted) return;
-          setState(() {
-            _objects = cloudObjects;
-            _loading = false;
-          });
-          return;
-        } catch (e) {
-          if (!mounted) return;
-          setState(() => _loadError = 'Error al cargar desde el servidor: $e');
+          cloudObjects.add(SavedObject(
+            id: e['id'] as int?,
+            name: e['name'] as String,
+            embeddings: embeddings,
+            createdAt:
+                DateTime.tryParse(e['created_at'] ?? '') ?? DateTime.now(),
+          ));
         }
+
+        // Persistir localmente para que el reconocimiento funcione sin conexión.
+        if (cloudObjects.isNotEmpty) {
+          await _repo.mergeAll(cloudObjects);
+        }
+
+        if (!mounted) return;
+        setState(() {
+          _objects = cloudObjects;
+          _loading = false;
+        });
+        return;
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _loadError = 'Error al cargar desde el servidor: $e');
       }
     }
 
-    // Sin sync habilitado, sin sesión o si el backend falló: mostrar objetos locales.
+    // Sin sesión activa o si el backend falló: mostrar objetos locales.
     final items = await _repo.getAll();
     if (!mounted) return;
     setState(() {

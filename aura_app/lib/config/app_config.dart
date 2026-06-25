@@ -1,16 +1,27 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-/// Configuración centralizada de la aplicación
-/// Cambiar solo aquí cuando necesites modificar URLs u otros parámetros
-
+/// Configuración centralizada de la aplicación.
+///
+/// La URL del backend se inyecta en tiempo de compilación:
+///   Dev:  flutter run  --dart-define=BACKEND_URL=http://192.168.1.42:8000
+///   Prod: flutter build apk --dart-define=BACKEND_URL=https://tu-backend.com
+///
+/// Si no se pasa --dart-define, usa la IP local como fallback de desarrollo.
 class AppConfig {
   /// Clave global del Navigator — permite mostrar diálogos desde servicios
   /// sin acceso al BuildContext (e.g. cuando el token expira en BackendService).
   static final GlobalKey<NavigatorState> navigatorKey =
       GlobalKey<NavigatorState>();
 
-  // URL del backend — usar IP local de la PC (no 127.0.0.1, eso es el propio teléfono)
-  static const String backendUrl = 'http://192.168.1.38:8000';
+  static const String _devFallbackUrl = 'http://192.168.1.42:8000';
+
+  /// URL base del backend. Inyectada con --dart-define=BACKEND_URL=...
+  /// En release sin dart-define, lanzará un assert para forzar configuración.
+  static const String backendUrl = String.fromEnvironment(
+    'BACKEND_URL',
+    defaultValue: _devFallbackUrl,
+  );
 
   // Endpoints de la API
   static String get apiObjectsEndpoint => '$backendUrl/api/objects';
@@ -24,7 +35,5 @@ class AppConfig {
   // Versión de la app
   static const String appVersion = '7.1.0';
 
-  // Modo debug
-  static const bool debugMode = true;
+  static bool get isProduction => kReleaseMode;
 }
-
