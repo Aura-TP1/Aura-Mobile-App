@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 /// Configuración centralizada de la aplicación.
 ///
 /// La URL del backend se inyecta en tiempo de compilación:
-///   Dev:  flutter run  --dart-define=BACKEND_URL=http://192.168.1.42:8000
-///   Prod: flutter build apk --dart-define=BACKEND_URL=https://tu-backend.com
+///   Dev:  flutter run  (usa fallback → Railway)
+///   Prod: flutter build apk --dart-define=BACKEND_URL=https://backend-production-e2c1.up.railway.app
 ///
 /// Si no se pasa --dart-define, usa la IP local como fallback de desarrollo.
 class AppConfig {
@@ -14,7 +14,8 @@ class AppConfig {
   static final GlobalKey<NavigatorState> navigatorKey =
       GlobalKey<NavigatorState>();
 
-  static const String _devFallbackUrl = 'http://192.168.1.42:8000';
+  static const String _devFallbackUrl =
+      'https://backend-production-e2c1.up.railway.app';
 
   /// URL base del backend. Inyectada con --dart-define=BACKEND_URL=...
   /// En release sin dart-define, lanzará un assert para forzar configuración.
