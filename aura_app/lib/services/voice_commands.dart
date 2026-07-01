@@ -28,17 +28,19 @@ class VoiceCommandParser {
     final lower = raw.toLowerCase().trim();
     if (lower.isEmpty) return const AuraCommand(AuraCommandType.unknown);
 
-    // Quitar el prefijo de activación "aura" (con coma/espacios opcionales).
-    final s = lower.replaceFirst(RegExp(r'^aura[\s,]+'), '').trim();
+    // Quitar el prefijo de activación "aura" aunque venga seguido de coma,
+    // dos puntos o guion, algo común en transcripciones Android.
+    final s = lower.replaceFirst(RegExp(r'^aura[\s,.:;-]+'), '').trim();
 
     // "para" / "detente" / "alto" / "silencio" → detener.
-    if (RegExp(r'\b(para|det[eé]nte|detener|alto|silencio|c[aá]llate)\b')
+    if (RegExp(r'\b(para|det[eé]nte|detener|alto|silencio|c[aá]llate|calla|silencia|pausa)\b')
         .hasMatch(s)) {
       return const AuraCommand(AuraCommandType.stop);
     }
 
-    // OCR: "lee", "leer", "texto", "modo lectura".
-    if (RegExp(r'\b(lee|leer|lectura|texto)\b').hasMatch(s)) {
+    // OCR: "lee", "leer", "texto", "qué dice", "modo lectura".
+    if (RegExp(r'\b(lee|leer|lectura|texto|que dice|qu[eé] dice|lectura de texto)\b')
+        .hasMatch(s)) {
       return const AuraCommand(AuraCommandType.readText);
     }
 
@@ -54,9 +56,9 @@ class VoiceCommandParser {
       );
     }
 
-    // "busca X" / "buscar X" / "encuentra X".
+    // "busca X" / "buscar X" / "encuentra X" / "localiza X".
     final searchMatch =
-        RegExp(r'(?:busca(?:r)?|encuentra)\s+(.*)$').firstMatch(s);
+      RegExp(r'(?:busca(?:r)?|encuentra|localiza)\s+(.*)$').firstMatch(s);
     if (searchMatch != null) {
       final obj = searchMatch.group(1)?.trim();
       return AuraCommand(
@@ -65,8 +67,11 @@ class VoiceCommandParser {
       );
     }
 
-    // "qué ves" / "que ves" / "describe" / "qué hay".
-    if (RegExp(r'qu[eé]\s+ves|describe|qu[eé]\s+hay|describir').hasMatch(s)) {
+    // "qué ves" / "que ves" / "describe" / "qué hay" / "muestra".
+    // "vez" se acepta como alternativa a "ves": son homófonos en seseo
+    // (Latinoamérica) y el modelo chico de Vosk los confunde seguido.
+    if (RegExp(r'qu[eé]\s+(ves|vez|hay|es)|describe|describir|muestra|muéstrame|veo')
+        .hasMatch(s)) {
       return const AuraCommand(AuraCommandType.describe);
     }
 

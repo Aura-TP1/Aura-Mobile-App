@@ -465,6 +465,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
           ),
+          const SizedBox(height: 12),
+          // TEMPORAL: diagnóstico de por qué el STT offline falla en ciertos
+          // equipos (ver stt_diagnostics_screen.dart). Quitar cuando ya no
+          // haga falta investigar dispositivos específicos.
+          GestureDetector(
+            onTap: () {
+              Navigator.of(context).pushNamed('/stt-diagnostics');
+            },
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity( 0.05),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white.withOpacity( 0.1)),
+              ),
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Icon(Icons.bug_report, color: Colors.white70, size: 20),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Diagnóstico STT',
+                      style: TextStyle(color: Colors.white, fontSize: 14),
+                    ),
+                  ),
+                  Icon(Icons.arrow_forward_ios, color: Colors.white.withOpacity( 0.5), size: 16),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -691,32 +721,71 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return base64Encode(utf8.encode(jsonEncode(data)));
   }
 
-  /// Sube todos los objetos locales al backend de una sola vez.
+  /// Sincroniza en ambos sentidos: sube los objetos locales al backend y
+  /// descarga los que ya estén en la nube (p.ej. subidos desde otro
+  /// teléfono con la misma cuenta), fusionándolos localmente.
+  /// Este es el único momento en que la app descarga objetos del backend.
   Future<void> _syncNow() async {
     setState(() { _isSyncing = true; _syncStatusMessage = null; });
     try {
-      final objects = await _repo.getAll();
-      if (objects.isEmpty) {
-        setState(() => _syncStatusMessage = 'No hay objetos locales para sincronizar.');
-        return;
+      final localObjects = await _repo.getAll();
+      if (localObjects.isNotEmpty) {
+        final payload = localObjects.map((o) => {
+          'id': o.id,
+          'name': o.name,
+          'embedding': _encodeEmbedding(o),
+          'thumbnail': null,
+          'created_at': o.createdAt.toIso8601String(),
+        }).toList();
+        await _backend.syncObjectsUpload(payload);
       }
-      final payload = objects.map((o) => {
-        'id': o.id,
-        'name': o.name,
-        'embedding': _encodeEmbedding(o),
-        'thumbnail': null,
-        'created_at': o.createdAt.toIso8601String(),
-      }).toList();
-      await _backend.syncObjectsUpload(payload);
+
+      final downloaded = await _downloadCloudObjects();
+      final total = (await _repo.getAll()).length;
+
       if (mounted) {
-        setState(() => _syncStatusMessage = '✓ ${objects.length} objetos sincronizados.');
+        setState(() => _syncStatusMessage = total == 0
+            ? 'No hay objetos para sincronizar.'
+            : '✓ $total objetos en total ($downloaded descargados de la nube).');
       }
-      await _audio.speak('Sincronización completada. ${objects.length} objetos subidos.');
+      await _audio.speak('Sincronización completada.');
     } catch (e) {
       if (mounted) setState(() => _syncStatusMessage = 'Error: $e');
       await _audio.speak('Error al sincronizar.');
     } finally {
       if (mounted) setState(() => _isSyncing = false);
     }
+  }
+
+  /// Descarga los objetos guardados en el backend y los fusiona (upsert por
+  /// nombre) con el repositorio local. Devuelve cuántos objetos se bajaron.
+  Future<int> _downloadCloudObjects() async {
+    final raw = await _backend.getSyncedObjects();
+    final cloudObjects = <SavedObject>[];
+    for (final e in raw) {
+      List<ObjectEmbedding> embeddings = const [];
+      final embeddingB64 = e['embedding'] as String?;
+      if (embeddingB64 != null && embeddingB64.isNotEmpty) {
+        try {
+          final bytes = base64Decode(embeddingB64);
+          final jsonList = jsonDecode(utf8.decode(bytes)) as List<dynamic>;
+          embeddings = jsonList
+              .map((item) => ObjectEmbedding.fromJson(item as Map<String, dynamic>))
+              .toList();
+        } catch (_) {
+          // Embedding corrupto: se omite ese objeto en la fusión.
+        }
+      }
+      cloudObjects.add(SavedObject(
+        id: e['id'] as int?,
+        name: e['name'] as String,
+        embeddings: embeddings,
+        createdAt: DateTime.tryParse(e['created_at'] ?? '') ?? DateTime.now(),
+      ));
+    }
+    if (cloudObjects.isNotEmpty) {
+      await _repo.mergeAll(cloudObjects);
+    }
+    return cloudObjects.length;
   }
 }

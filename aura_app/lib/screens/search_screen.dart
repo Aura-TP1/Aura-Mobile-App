@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/saved_object.dart';
 import '../services/saved_objects_repository.dart';
-import '../services/stt_service.dart';
+import '../services/voice_input_service.dart';
 import '../services/tts.dart';
 import 'real_search_screen.dart';
 
@@ -32,9 +32,11 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
   ];
 
   final AudioFeedback _audio = AudioFeedback();
-  final SttService _stt = SttService();
+  late final VoiceInputService _voice = VoiceInputService(_audio);
   final SavedObjectsRepository _repo = SavedObjectsRepository();
   late final AnimationController _pulseController;
+  final TextEditingController _targetController = TextEditingController();
+  final FocusNode _targetFocus = FocusNode();
 
   List<SavedObject> _savedObjects = const [];
   String? _currentTarget;
@@ -74,8 +76,10 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
 
   @override
   void dispose() {
-    _stt.stop();
+    _voice.stop();
     _pulseController.dispose();
+    _targetController.dispose();
+    _targetFocus.dispose();
     _audio.stop();
     _audio.dispose();
     super.dispose();
@@ -101,10 +105,10 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
     }
   }
 
-  // ── Entrada de voz ────────────────────────────────────────────────────
+  // ── Entrada de voz (fallback de 3 niveles: Google → Vosk → texto) ─────
   Future<void> _handleMicTap() async {
     if (_isListening) {
-      await _stt.stop();
+      await _voice.stop();
       if (mounted) setState(() => _isListening = false);
       return;
     }
@@ -118,22 +122,33 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
     await Future.delayed(const Duration(milliseconds: 250));
     if (!mounted) { setState(() => _isListening = false); return; }
 
-    await _stt.startListening(onResult: (text) async {
-      if (!mounted) return;
-      setState(() => _isListening = false);
-      if (text == null || text.isEmpty) {
-        if (_stt.permanentlyDenied) {
-          await _audio.speak('Necesito permiso del micrófono. Te llevo a ajustes.');
-          await _stt.openSettings();
-        } else {
-          await _audio.speak('No te escuché. Intenta de nuevo.');
-        }
-        return;
-      }
+    final text = await _voice.listen();
+    if (!mounted) return;
+    setState(() => _isListening = false);
+
+    if (text != null) {
       final target = _stripPossessive(text);
       setState(() => _currentTarget = target);
       await _audio.speak('Entendí: $target. Presiona activar para buscar.');
-    });
+      return;
+    }
+    if (_voice.permanentlyDenied) {
+      await _audio.speak('Necesito permiso del micrófono. Te llevo a ajustes.');
+      await _voice.openSettings();
+      return;
+    }
+    // Tier 3: ambos niveles de voz fallaron, dicta por teclado.
+    await _audio.speak('Escribe el nombre del objeto.');
+    if (mounted) FocusScope.of(context).requestFocus(_targetFocus);
+  }
+
+  // ── Confirmar objetivo escrito a mano (Tier 3) ─────────────────────────
+  Future<void> _handleTargetTyped(String value) async {
+    final v = value.trim();
+    if (v.isEmpty) return;
+    final target = _stripPossessive(v);
+    setState(() => _currentTarget = target);
+    await _audio.speak('Entendí: $target. Presiona activar para buscar.');
   }
 
   // ── Activar búsqueda ──────────────────────────────────────────────────
@@ -255,6 +270,8 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
               _buildMicButton(),
               const SizedBox(height: 16),
               _buildInstructionText(),
+              const SizedBox(height: 16),
+              _buildTargetInput(),
               const SizedBox(height: 20),
               _buildActivateButton(),
               const SizedBox(height: 24),
@@ -341,6 +358,26 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
         fontWeight:
             _currentTarget != null ? FontWeight.bold : FontWeight.normal,
       ),
+    );
+  }
+
+  // Campo de texto (Tier 3): escribir el nombre a mano si la voz falla.
+  Widget _buildTargetInput() {
+    return TextField(
+      controller: _targetController,
+      focusNode: _targetFocus,
+      textCapitalization: TextCapitalization.sentences,
+      textInputAction: TextInputAction.done,
+      style: const TextStyle(fontSize: 24, color: Colors.black),
+      decoration: InputDecoration(
+        hintText: 'O escribe el nombre',
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      ),
+      onSubmitted: _handleTargetTyped,
     );
   }
 

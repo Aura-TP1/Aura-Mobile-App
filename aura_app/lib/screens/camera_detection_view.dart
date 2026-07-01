@@ -10,9 +10,10 @@ import 'package:vibration/vibration.dart';
 
 import '../services/object_detector.dart';
 import '../services/ocr_service.dart';
-import '../services/stt_service.dart';
+import '../services/voice_input_service.dart';
 import '../services/tts.dart';
 import '../services/voice_commands.dart';
+import '../widgets/voice_text_fallback_sheet.dart';
 
 /// Modo de la pantalla de cámara: detección de objetos (YOLO) o lectura de
 /// texto (OCR). Solo uno está activo a la vez; al cambiar, el otro se pausa.
@@ -39,8 +40,8 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
 
   final ObjectDetector _detector = ObjectDetector();
   final OcrService _ocr = OcrService();
-  final SttService _stt = SttService();
   final AudioFeedback _audio = AudioFeedback();
+  late final VoiceInputService _voice = VoiceInputService(_audio);
 
   bool _isInitialized = false;
   bool _isDetecting = false;
@@ -158,7 +159,7 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     _controller?.dispose();
     _detector.dispose();
     _ocr.dispose();
-    _stt.stop();
+    _voice.stop();
     _audio.stop();
     _audio.dispose();
     super.dispose();
@@ -569,10 +570,12 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     if (wasActive) _startDetection();
   }
 
-  // ── Voz dentro de la cámara ───────────────────────────────────────────
+  // ── Voz dentro de la cámara ─────────────────────────────────────────────
+  // Fallback de 3 niveles: Google/on-device STT → Vosk offline → campo de
+  // texto (solo si ambos niveles de voz fallan).
   Future<void> _handleVoiceTap() async {
     if (_voiceListening) {
-      await _stt.stop();
+      await _voice.stop();
       if (mounted) setState(() => _voiceListening = false);
       return;
     }
@@ -580,36 +583,47 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     await _audio.speak('Te escucho.');
     await Future.delayed(const Duration(milliseconds: 250));
     if (!mounted) return;
-    await _stt.startListening(onResult: (text) {
-      if (!mounted) return;
-      setState(() => _voiceListening = false);
-      if (text == null || text.isEmpty) {
-        if (_stt.permanentlyDenied) {
-          _audio.speak('Necesito permiso del micrófono. Te llevo a ajustes.');
-          _stt.openSettings();
-        } else {
-          _audio.speak('No entendí, intenta de nuevo.');
-        }
-        return;
-      }
-      final cmd = VoiceCommandParser.parse(text);
-      switch (cmd.type) {
-        case AuraCommandType.readText:
-          _setMode(CamMode.ocr);
-          if (!_streamActive) _startDetection();
-          break;
-        case AuraCommandType.describe:
-          _setMode(CamMode.yolo);
-          if (!_streamActive) _startDetection();
-          break;
-        case AuraCommandType.stop:
-          _stopDetection();
-          _audio.stop();
-          break;
-        default:
-          _audio.speak('No entendí, intenta de nuevo.');
-      }
-    });
+
+    final text = await _voice.listen();
+    if (!mounted) return;
+    setState(() => _voiceListening = false);
+
+    if (text != null) {
+      _routeCameraVoiceCommand(text);
+      return;
+    }
+    if (_voice.permanentlyDenied) {
+      await _audio.speak('Necesito permiso del micrófono. Te llevo a ajustes.');
+      await _voice.openSettings();
+      return;
+    }
+    // Tier 3: ambos niveles de voz fallaron, dicta el comando por teclado.
+    await _audio.speak('Escribe tu comando.');
+    if (!mounted) return;
+    final typed = await showVoiceTextFallbackSheet(context, hint: 'Escribe tu comando');
+    if (typed != null && typed.isNotEmpty) {
+      _routeCameraVoiceCommand(typed);
+    }
+  }
+
+  void _routeCameraVoiceCommand(String text) {
+    final cmd = VoiceCommandParser.parse(text);
+    switch (cmd.type) {
+      case AuraCommandType.readText:
+        _setMode(CamMode.ocr);
+        if (!_streamActive) _startDetection();
+        break;
+      case AuraCommandType.describe:
+        _setMode(CamMode.yolo);
+        if (!_streamActive) _startDetection();
+        break;
+      case AuraCommandType.stop:
+        _stopDetection();
+        _audio.stop();
+        break;
+      default:
+        _audio.speak('No entendí, intenta de nuevo.');
+    }
   }
 
   // ── UI ────────────────────────────────────────────────────────────────

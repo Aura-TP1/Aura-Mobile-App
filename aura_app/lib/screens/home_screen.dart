@@ -2,8 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../services/tts.dart';
-import '../services/stt_service.dart';
+import '../services/voice_input_service.dart';
 import '../services/voice_commands.dart';
+import '../widgets/voice_text_fallback_sheet.dart';
 
 const Color kAuraRed = Color(0xFFE53935);
 
@@ -29,10 +30,11 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final AudioFeedback _audio = AudioFeedback();
-  final SttService _stt = SttService();
+  late final VoiceInputService _voice = VoiceInputService(_audio);
   Timer? _reminderTimer;
   DateTime _lastUserActionAt = DateTime.fromMillisecondsSinceEpoch(0);
   bool _isListening = false;
+  bool _showVoiceHints = false;
 
   @override
   void initState() {
@@ -50,7 +52,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _reminderTimer?.cancel();
-    _stt.stop();
+    _voice.stop();
     _audio.stop();
     _audio.dispose();
     super.dispose();
@@ -84,34 +86,53 @@ class _HomeScreenState extends State<HomeScreen> {
     _audio.speak(_kMenuSpeech);
   }
 
-  // ── Comando de voz global ("TOCA PARA HABLAR") ────────────────────────
+  // ── Comando de voz global ("TOCA PARA HABLAR") ─────────────────────────
+  // Fallback de 3 niveles: Google/on-device STT → Vosk offline → campo de
+  // texto (solo si ambos niveles de voz fallan).
   Future<void> _handleVoiceCommand() async {
     _lastUserActionAt = DateTime.now();
     if (_isListening) {
-      await _stt.stop();
-      if (mounted) setState(() => _isListening = false);
+      await _voice.stop();
+      if (mounted) {
+        setState(() {
+          _isListening = false;
+          _showVoiceHints = false;
+        });
+      }
       return;
     }
-    setState(() => _isListening = true);
+    setState(() {
+      _isListening = true;
+      _showVoiceHints = true;
+    });
     await _audio.speak('Te escucho. Di un comando.');
     // Pequeña pausa para que el TTS libere el foco de audio antes de escuchar.
     await Future.delayed(const Duration(milliseconds: 250));
     if (!mounted) return;
-    await _stt.startListening(onResult: (text) async {
-      if (!mounted) return;
-      setState(() => _isListening = false);
-      if (text == null || text.isEmpty) {
-        if (_stt.permanentlyDenied) {
-          await _audio.speak(
-              'Necesito permiso del micrófono. Te llevo a ajustes.');
-          await _stt.openSettings();
-        } else {
-          await _audio.speak('No entendí, intenta de nuevo.');
-        }
-        return;
-      }
-      await _routeVoiceCommand(text);
+
+    final text = await _voice.listen();
+    if (!mounted) return;
+    setState(() {
+      _isListening = false;
+      _showVoiceHints = false;
     });
+
+    if (text != null) {
+      await _routeVoiceCommand(text);
+      return;
+    }
+    if (_voice.permanentlyDenied) {
+      await _audio.speak('Necesito permiso del micrófono. Te llevo a ajustes.');
+      await _voice.openSettings();
+      return;
+    }
+    // Tier 3: ambos niveles de voz fallaron, dicta el comando por teclado.
+    await _audio.speak('Escribe tu comando.');
+    if (!mounted) return;
+    final typed = await showVoiceTextFallbackSheet(context, hint: 'Escribe tu comando');
+    if (typed != null && typed.isNotEmpty) {
+      await _routeVoiceCommand(typed);
+    }
   }
 
   Future<void> _routeVoiceCommand(String text) async {
@@ -224,6 +245,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     : const Color(0xFF6D4C41),
                 onTap: _handleVoiceCommand,
               ),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                child: _showVoiceHints
+                    ? Padding(
+                        padding: const EdgeInsets.only(top: 12),
+                        child: _buildVoiceHintsPanel(),
+                      )
+                    : const SizedBox.shrink(),
+              ),
             ],
           ),
         ),
@@ -292,6 +324,84 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildVoiceHintsPanel() {
+    final hints = <String>[
+      'Aura qué ves',
+      'Aura lee texto',
+      'Aura busca celular',
+      'Aura guarda como libro',
+      'Aura para',
+      'Aura detecta objetos',
+      'Aura busca lentes',
+    ];
+
+    return Container(
+      key: const ValueKey('voice-hints-panel'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1F1F1F),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withOpacity(0.10)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.22),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: const [
+              Icon(Icons.graphic_eq, color: Color(0xFFFFC107), size: 18),
+              SizedBox(width: 8),
+              Text(
+                'Comandos rápidos',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: hints
+                .map(
+                  (hint) => Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2E2E2E),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.08),
+                      ),
+                    ),
+                    child: Text(
+                      hint,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+        ],
       ),
     );
   }

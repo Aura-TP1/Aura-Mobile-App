@@ -55,10 +55,18 @@ class GoogleAuthService {
     try {
       _lastError = null;
       _currentUser = await _googleSignIn.signInSilently();
-      if (_currentUser == null) {
-        developer.log('Iniciando Google Sign-In con diálogo...');
-        _currentUser = await _googleSignIn.signIn();
+      if (_currentUser != null) {
+        if (await _fetchAndStoreToken()) return true;
+        // La cuenta cacheada por signInSilently ya no es válida (acceso
+        // revocado, sesión de Play Services vencida, etc.). Si la dejamos en
+        // _currentUser, el próximo intento nunca llegará al diálogo
+        // interactivo de Google porque "if (_currentUser == null)" sería
+        // falso. Hay que descartarla explícitamente.
+        await _googleSignIn.signOut();
+        _currentUser = null;
       }
+      developer.log('Iniciando Google Sign-In con diálogo...');
+      _currentUser = await _googleSignIn.signIn();
       if (_currentUser == null) {
         _lastError = 'Google Sign-In cancelado por el usuario';
         return false;
@@ -83,9 +91,16 @@ class GoogleAuthService {
     try {
       _currentUser ??= await _googleSignIn.signInSilently();
       if (_currentUser == null) return false;
-      return await _fetchAndStoreToken();
+      final ok = await _fetchAndStoreToken();
+      if (!ok) {
+        // Cuenta cacheada inválida: la descartamos para que el próximo
+        // signIn() no se quede atascado creyendo que ya hay una cuenta.
+        _currentUser = null;
+      }
+      return ok;
     } catch (e) {
       developer.log('Error al renovar token: $e');
+      _currentUser = null;
       return false;
     }
   }

@@ -11,7 +11,7 @@ import '../services/backend_service.dart';
 import '../services/embedding_service.dart';
 import '../services/google_auth_service.dart';
 import '../services/saved_objects_repository.dart';
-import '../services/stt_service.dart';
+import '../services/voice_input_service.dart';
 import '../services/tts.dart';
 import 'multi_angle_capture_screen.dart' show MultiAngleCaptureScreen, CaptureAngle;
 
@@ -41,7 +41,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
   final AudioFeedback _audio = AudioFeedback();
   final SavedObjectsRepository _repo = SavedObjectsRepository();
   final EmbeddingService _embeddings = EmbeddingService();
-  final SttService _stt = SttService();
+  late final VoiceInputService _voice = VoiceInputService(_audio);
   final GoogleAuthService _auth = GoogleAuthService();
   final BackendService _backend = BackendService();
 
@@ -117,6 +117,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
 
   @override
   void dispose() {
+    _voice.stop();
     _camera?.dispose();
     _embeddings.dispose();
     _audio.stop();
@@ -126,10 +127,10 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     super.dispose();
   }
 
-  // ── Voz: dictar nombre ───────────────────────────────────────────────
+  // ── Voz: dictar nombre (fallback de 3 niveles: Google → Vosk → texto) ──
   Future<void> _handleMicTap() async {
     if (_isListeningMic) {
-      await _stt.stop();
+      await _voice.stop();
       if (mounted) setState(() => _isListeningMic = false);
       return;
     }
@@ -137,18 +138,26 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     await _audio.speak('Te escucho.');
     await Future.delayed(const Duration(milliseconds: 250));
     if (!mounted) { setState(() => _isListeningMic = false); return; }
-    await _stt.startListening(onResult: (text) {
-      if (!mounted) return;
-      setState(() => _isListeningMic = false);
-      if (text == null || text.isEmpty) {
-        _audio.speak('No te escuché. Intenta de nuevo.');
-        return;
-      }
+
+    final text = await _voice.listen();
+    if (!mounted) return;
+    setState(() => _isListeningMic = false);
+
+    if (text != null) {
       // TODO: future voice trigger — "Guarda esto como <name>" from
       // search_screen should navigate here pre-filled (implement later).
       _nameController.text = text;
-      _audio.speak('Nombre: $text. Presiona guardar.');
-    });
+      await _audio.speak('Nombre: $text. Presiona guardar.');
+      return;
+    }
+    if (_voice.permanentlyDenied) {
+      await _audio.speak('Necesito permiso del micrófono. Te llevo a ajustes.');
+      await _voice.openSettings();
+      return;
+    }
+    // Tier 3: ambos niveles de voz fallaron, dicta por teclado.
+    await _audio.speak('Escribe el nombre del objeto.');
+    if (mounted) FocusScope.of(context).requestFocus(_nameFocus);
   }
 
    // ── Guardar ──────────────────────────────────────────────────────────
@@ -276,7 +285,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         ),
       ),
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -379,7 +388,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
             controller: _nameController,
             focusNode: _nameFocus,
             textCapitalization: TextCapitalization.sentences,
-            style: const TextStyle(fontSize: 18),
+            style: const TextStyle(fontSize: 24),
             decoration: InputDecoration(
               hintText: 'Nombre del objeto',
               border: OutlineInputBorder(

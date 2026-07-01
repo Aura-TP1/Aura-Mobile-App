@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_recognition_error.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 /// Wrapper reutilizable sobre `speech_to_text`.
 ///
@@ -12,11 +12,16 @@ import 'package:speech_to_text/speech_to_text.dart';
 /// Decisiones clave para robustez (antes fallaba en ~1 s en dispositivos
 /// reales):
 ///   - El locale NO se fija a 'es-PE': se elige el mejor disponible en el
-///     dispositivo (es-PE → cualquier es-* → locale del sistema). Forzar un
-///     locale no instalado hacía que el motor abortara al instante.
+///     dispositivo (es-PE → cualquier es-* → null). Forzar un locale no
+///     instalado hacía que el motor abortara al instante.
 ///   - `cancelOnError: false` + `partialResults: true`: errores transitorios
 ///     (p. ej. el usuario aún no habla) ya no cierran la sesión.
 ///   - Se distingue `permanentlyDenied` para poder mandar al usuario a Ajustes.
+///   - `onDevice: true` en el listen: la app debe funcionar sin conexión, así
+///     que preferimos el reconocedor offline de Android. Solo funciona si el
+///     equipo ya tiene descargado el paquete de voz español (Ajustes app de
+///     Google > Voz > Reconocimiento de voz sin conexión); si no lo tiene,
+///     el propio SO sigue devolviendo `error_language_unavailable`.
 ///
 /// En Chrome delega a Web Speech API (el permiso lo pide el navegador).
 /// En Android usa el `SpeechRecognizer` nativo y pide `RECORD_AUDIO`.
@@ -28,6 +33,7 @@ class SttService {
   bool _permanentlyDenied = false;
   String _lastPartial = '';
   String? _localeId;
+  bool _localeFallbackDone = false;
   void Function(String?)? _pendingOnResult;
 
   bool get available => _available;
@@ -41,22 +47,13 @@ class SttService {
   /// Retorna `true` si el motor quedó disponible.
   Future<bool> init() async {
     if (_available) return true;
-    // Android: pedimos RECORD_AUDIO con permission_handler.
-    // iOS: NO usamos permission_handler aquí. speech_to_text pide micrófono +
-    // reconocimiento de voz por sí mismo (usando las descripciones del
-    // Info.plist) al llamar initialize(). Así el diálogo aparece aunque los
-    // macros del Podfile no estén, y evitamos bloquear antes de mostrarlo.
+    // Android e iOS dejan que speech_to_text gestione el permiso nativo.
+    // Así evitamos duplicar el diálogo de micrófono con otra capa y nos
+    // alineamos con el motor de reconocimiento del sistema.
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      var status = await Permission.microphone.status;
-      if (!status.isGranted) {
-        status = await Permission.microphone.request();
-      }
-      if (status.isPermanentlyDenied || status.isRestricted) {
-        _permanentlyDenied = true;
-        return false;
-      }
-      if (!status.isGranted) return false;
-      _permanentlyDenied = false;
+      // Algunos dispositivos necesitan un pequeño respiro tras volver del
+      // diálogo de permisos antes de inicializar el reconocedor.
+      await Future.delayed(const Duration(milliseconds: 150));
     }
     _available = await _speech.initialize(
       onStatus: _onStatus,
@@ -66,9 +63,7 @@ class SttService {
     if (_available) {
       _permanentlyDenied = false;
       _localeId = await _pickLocale();
-    } else if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
-      // En iOS, si initialize falla suele ser por permiso denegado: en iOS la
-      // negación es permanente (hay que ir a Ajustes).
+    } else {
       _permanentlyDenied = !(await _speech.hasPermission);
     }
     return _available;
@@ -77,8 +72,10 @@ class SttService {
   /// Abre los Ajustes del sistema para habilitar el micrófono manualmente.
   Future<void> openSettings() => openAppSettings();
 
-  /// Elige el mejor locale de español disponible en el dispositivo, con
-  /// fallback al locale del sistema y, en último caso, `null` (motor default).
+  /// Elige el mejor locale de español disponible en el dispositivo.
+  ///
+  /// Si no hay un locale de español instalado, devuelve `null` para que el
+  /// motor use su configuración por defecto en lugar de un id dudoso.
   Future<String?> _pickLocale() async {
     try {
       final locales = await _speech.locales();
@@ -92,8 +89,7 @@ class SttService {
       }
       if (exact != null) return exact.localeId;
       if (anyEs != null) return anyEs.localeId;
-      final sys = await _speech.systemLocale();
-      return sys?.localeId; // null → el motor usa su propio default
+      return null; // null → el motor usa su propio default
     } catch (_) {
       return null;
     }
@@ -108,7 +104,14 @@ class SttService {
   }) async {
     if (_isListening) return;
     if (!_available) {
-      final ok = await init();
+      var ok = await init();
+      if (!ok && !kIsWeb && defaultTargetPlatform == TargetPlatform.android &&
+          !_permanentlyDenied) {
+        // Reintento corto para Android: a veces el servicio aún no queda
+        // listo en el primer frame después de conceder permisos.
+        await Future.delayed(const Duration(milliseconds: 250));
+        ok = await init();
+      }
       if (!ok) {
         onResult(null);
         return;
@@ -117,19 +120,26 @@ class SttService {
     _pendingOnResult = onResult;
     _gotResult = false;
     _lastPartial = '';
+    _localeFallbackDone = false;
     _isListening = true;
-    await _speech.listen(
-      onResult: _onSpeechResult,
-      localeId: _localeId,
-      listenFor: const Duration(seconds: 30),
-      pauseFor: const Duration(seconds: 4),
-      listenOptions: SpeechListenOptions(
-        partialResults: true,
-        cancelOnError: false,
-        listenMode: ListenMode.dictation,
-      ),
-    );
+    await _listen();
   }
+
+  Future<void> _listen() => _speech.listen(
+        onResult: _onSpeechResult,
+        localeId: _localeId,
+        listenFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 4),
+        listenOptions: SpeechListenOptions(
+          partialResults: true,
+          cancelOnError: false,
+          listenMode: ListenMode.dictation,
+          // La app debe funcionar sin datos/wifi: preferimos el reconocedor
+          // on-device de Android (requiere el paquete de voz offline
+          // descargado en el equipo) en vez del motor en la nube por defecto.
+          onDevice: true,
+        ),
+      );
 
   Future<void> stop() async {
     if (!_isListening) return;
@@ -163,6 +173,18 @@ class SttService {
     debugPrint('STT error: ${error.errorMsg} (permanent: ${error.permanent})');
     // Errores transitorios (el usuario todavía no habla) no cierran la sesión.
     if (!error.permanent) return;
+    // Algunos dispositivos listan un locale como "instalado" (_pickLocale)
+    // pero el servicio de reconocimiento no puede usarlo en vivo. En ese
+    // caso reintentamos una vez con el locale por defecto del motor antes
+    // de rendirnos.
+    final isLocaleIssue = error.errorMsg == 'error_language_unavailable' ||
+        error.errorMsg == 'error_language_not_supported';
+    if (isLocaleIssue && _localeId != null && !_localeFallbackDone) {
+      _localeFallbackDone = true;
+      _localeId = null;
+      _listen();
+      return;
+    }
     if (_isListening && !_gotResult) {
       _isListening = false;
       _deliver(_lastPartial.isEmpty ? null : _lastPartial);

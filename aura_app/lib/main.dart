@@ -8,6 +8,7 @@ import 'screens/camera_detection_view.dart';
 import 'screens/save_object_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/help_screen.dart';
+import 'screens/stt_diagnostics_screen.dart';
 import 'services/app_settings.dart';
 
 
@@ -75,6 +76,7 @@ class AuraApp extends StatelessWidget {
             '/save-object': (context) => const SaveObjectScreen(),
             '/settings': (context) => const SettingsScreen(),
             '/help': (context) => const HelpScreen(),
+            '/stt-diagnostics': (context) => const SttDiagnosticsScreen(),
           },
         );
       },
