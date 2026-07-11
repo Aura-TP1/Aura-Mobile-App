@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 
 import '../models/saved_object.dart';
+import '../services/detection_crop.dart';
 import '../services/embedding_service.dart';
+import '../services/object_detector.dart';
 import '../services/stt_service.dart';
 import '../services/tts.dart';
 
@@ -41,6 +43,7 @@ class MultiAngleCaptureScreen extends StatefulWidget {
 class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
   final AudioFeedback _audio = AudioFeedback();
   final EmbeddingService _embeddings = EmbeddingService();
+  final ObjectDetector _detector = ObjectDetector();
 
   CameraController? _camera;
   bool _cameraReady = false;
@@ -66,6 +69,7 @@ class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
         'Captura de múltiples ángulos. Prepárate para tomar fotos desde diferentes posiciones.');
     await _initCamera();
     await _embeddings.loadModel();
+    await _detector.loadModel();
     if (mounted) setState(() => _modelLoaded = _embeddings.isLoaded);
   }
 
@@ -99,6 +103,7 @@ class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
   void dispose() {
     _camera?.dispose();
     _embeddings.dispose();
+    _detector.dispose();
     _audio.stop();
     _audio.dispose();
     super.dispose();
@@ -124,7 +129,24 @@ class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
       }
 
       setState(() => _isProcessing = true);
-      final embedding = await _embeddings.extractEmbedding(decoded);
+
+      // Recortar al bounding box de YOLO (con padding) en vez de usar el
+      // frame completo: el embedding de cada ángulo debe describir el
+      // objeto, no el fondo alrededor de él.
+      var toEmbed = decoded;
+      if (_detector.isLoaded) {
+        final detections = await _detector.detect(decoded);
+        final best = highestConfidence(detections);
+        if (best != null) {
+          toEmbed = cropToDetection(decoded, best);
+        } else {
+          debugPrint('[multi_angle] YOLO no detectó nada en $angle; usando imagen completa como fallback.');
+        }
+      } else {
+        debugPrint('[multi_angle] Detector YOLO no cargado; usando imagen completa como fallback.');
+      }
+
+      final embedding = await _embeddings.extractEmbedding(toEmbed);
 
       if (mounted) {
         setState(() {

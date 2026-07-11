@@ -8,8 +8,10 @@ import 'package:image/image.dart' as img;
 import 'package:vibration/vibration.dart';
 
 import '../models/saved_object.dart';
+import '../services/detection_crop.dart';
 import '../services/embedding_service.dart';
 import '../services/embedding_service_common.dart';
+import '../services/object_detector.dart';
 import '../services/tts.dart';
 
 const Color _kAuraRed = Color(0xFFE53935);
@@ -41,6 +43,7 @@ class RealSearchScreen extends StatefulWidget {
 class _RealSearchScreenState extends State<RealSearchScreen>
     with TickerProviderStateMixin {
   final EmbeddingService _embeddings = EmbeddingService();
+  final ObjectDetector _detector = ObjectDetector();
   final AudioFeedback _audio = AudioFeedback();
 
   CameraController? _camera;
@@ -133,7 +136,7 @@ class _RealSearchScreenState extends State<RealSearchScreen>
   }
 
   Future<void> _loadModel() async {
-    await _embeddings.loadModel();
+    await Future.wait([_embeddings.loadModel(), _detector.loadModel()]);
     if (mounted) setState(() => _modelLoaded = _embeddings.isLoaded);
   }
 
@@ -166,7 +169,24 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           continue;
         }
 
-        final frameEmb = await _embeddings.extractEmbedding(image);
+        // Recortar al bounding box de YOLO (con padding) antes de extraer
+        // el embedding del frame, igual que al guardar el objeto: comparar
+        // "objeto recortado vs. objeto recortado" es lo que hace que la
+        // similitud coseno sea representativa (ver Tabla II).
+        var toEmbed = image;
+        if (_detector.isLoaded) {
+          final detections = await _detector.detect(image);
+          final best = highestConfidence(detections);
+          if (best != null) {
+            toEmbed = cropToDetection(image, best);
+          } else {
+            debugPrint('[real_search] YOLO no detectó nada en este frame; usando imagen completa como fallback.');
+          }
+        } else {
+          debugPrint('[real_search] Detector YOLO no cargado; usando imagen completa como fallback.');
+        }
+
+        final frameEmb = await _embeddings.extractEmbedding(toEmbed);
         if (frameEmb.isEmpty) {
           await Future.delayed(_frameInterval);
           continue;
@@ -262,6 +282,7 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     _foundController.dispose();
     _camera?.dispose();
     _embeddings.dispose();
+    _detector.dispose();
     _audio.stop();
     _audio.dispose();
     super.dispose();

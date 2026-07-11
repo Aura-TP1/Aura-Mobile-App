@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show ProcessInfo;
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -302,9 +303,13 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
 
     _isDetecting = true;
     final frameStart = DateTime.now(); // incluye conversión + inferencia
-    final image = _convertCameraImage(frame);
-    if (image == null) { _isDetecting = false; return; }
+    _convertCameraImageAsync(frame).then((image) {
+      if (image == null) { _isDetecting = false; return; }
+      _handleConvertedFrame(image, frameStart);
+    });
+  }
 
+  void _handleConvertedFrame(img.Image image, DateTime frameStart) {
     _detector.detect(image).then((dets) {
       final frameMs = DateTime.now().difference(frameStart).inMilliseconds;
       _updateAdaptiveInterval(frameMs);
@@ -384,10 +389,31 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   }
 
   // ── Conversión CameraImage → img.Image ───────────────────────────────
-  img.Image? _convertCameraImage(CameraImage frame) {
+  //
+  // La conversión YUV420→RGB (el bottleneck de FPS confirmado en el audit:
+  // un loop pixel-a-pixel en Dart) se movió a un isolate en background con
+  // `Isolate.run`, para no bloquear el hilo principal (UI + gestos + stream
+  // callback siguiente) mientras se procesa el frame.
+  //
+  // Trade-offs vs. la versión anterior (buffer reutilizado en el hilo
+  // principal):
+  //  - Ya no se puede reutilizar `_rgbBuffer` entre frames: cada llamada a
+  //    Isolate.run copia los datos de entrada al nuevo isolate y copia el
+  //    resultado de vuelta, así que se asigna un buffer RGB nuevo por frame
+  //    (~1 MB para una cámara 640x480). Esto aumenta la presión sobre el GC
+  //    comparado con el buffer reutilizado anterior.
+  //  - `Isolate.run` crea y destruye un isolate por llamada (~1-5 ms de
+  //    overhead típico en dispositivos móviles, más el costo de copiar los
+  //    planes Y/U/V, que también se copian explícitamente antes de cruzar
+  //    el límite del isolate). Para frames de cámara (cientos de KB) esto
+  //    es aceptable y muy inferior al tiempo que el loop bloqueaba la UI.
+  //  - BGRA8888 (usado en iOS) no pasa por el loop pixel-a-pixel — ya usa
+  //    `img.Image.fromBytes` directo sobre los bytes nativos — así que se
+  //    mantiene síncrono, no necesita isolate.
+  Future<img.Image?> _convertCameraImageAsync(CameraImage frame) async {
     try {
       if (frame.format.group == ImageFormatGroup.yuv420) {
-        return _convertYUV420(frame);
+        return await _convertYUV420Isolate(frame);
       } else if (frame.format.group == ImageFormatGroup.bgra8888) {
         return _convertBGRA8888(frame);
       }
@@ -398,41 +424,28 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     }
   }
 
-  /// Buffer RGB reutilizado entre frames (mismo tamaño de cámara) para
-  /// evitar asignar ~1 MB por frame y reducir la presión sobre el GC en
-  /// equipos con poca RAM.
-  Uint8List? _rgbBuffer;
-
-  img.Image _convertYUV420(CameraImage frame) {
-    final w = frame.width;
-    final h = frame.height;
+  Future<img.Image> _convertYUV420Isolate(CameraImage frame) async {
     final yPlane = frame.planes[0];
     final uPlane = frame.planes[1];
     final vPlane = frame.planes[2];
-    final yStride = yPlane.bytesPerRow;
-    final uvStride = uPlane.bytesPerRow;
-    final uvPixel = uPlane.bytesPerPixel ?? 1;
 
-    final neededSize = w * h * 3;
-    var rgb = _rgbBuffer;
-    if (rgb == null || rgb.length != neededSize) {
-      rgb = Uint8List(neededSize);
-      _rgbBuffer = rgb;
-    }
-    int idx = 0;
-    for (int y = 0; y < h; y++) {
-      for (int x = 0; x < w; x++) {
-        final yy = yPlane.bytes[y * yStride + x] - 16;
-        final uvIdx = (y >> 1) * uvStride + (x >> 1) * uvPixel;
-        final uu = uPlane.bytes[uvIdx] - 128;
-        final vv = vPlane.bytes[uvIdx] - 128;
-        rgb[idx++] = ((298 * yy + 409 * vv + 128) >> 8).clamp(0, 255);
-        rgb[idx++] = ((298 * yy - 100 * uu - 208 * vv + 128) >> 8).clamp(0, 255);
-        rgb[idx++] = ((298 * yy + 516 * uu + 128) >> 8).clamp(0, 255);
-      }
-    }
+    final args = _YuvConversionArgs(
+      width: frame.width,
+      height: frame.height,
+      yStride: yPlane.bytesPerRow,
+      uvStride: uPlane.bytesPerRow,
+      uvPixelStride: uPlane.bytesPerPixel ?? 1,
+      // Copias explícitas: los bytes de los planes viven en memoria nativa
+      // gestionada por el plugin `camera` y no son seguros de compartir
+      // directamente entre isolates.
+      yBytes: Uint8List.fromList(yPlane.bytes),
+      uBytes: Uint8List.fromList(uPlane.bytes),
+      vBytes: Uint8List.fromList(vPlane.bytes),
+    );
+
+    final rgb = await Isolate.run(() => _yuv420ToRgb(args));
     return img.Image.fromBytes(
-      width: w, height: h, bytes: rgb.buffer, numChannels: 3,
+      width: args.width, height: args.height, bytes: rgb.buffer, numChannels: 3,
     );
   }
 
@@ -1051,4 +1064,49 @@ class _DetectionPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _DetectionPainter old) =>
       old.detections != detections;
+}
+
+/// Datos de entrada para la conversión YUV420→RGB en isolate. Todos los
+/// campos son tipos "sendable" (primitivos + Uint8List) para poder cruzar
+/// el límite del isolate sin copias implícitas costosas.
+class _YuvConversionArgs {
+  final int width;
+  final int height;
+  final int yStride;
+  final int uvStride;
+  final int uvPixelStride;
+  final Uint8List yBytes;
+  final Uint8List uBytes;
+  final Uint8List vBytes;
+
+  _YuvConversionArgs({
+    required this.width,
+    required this.height,
+    required this.yStride,
+    required this.uvStride,
+    required this.uvPixelStride,
+    required this.yBytes,
+    required this.uBytes,
+    required this.vBytes,
+  });
+}
+
+/// Función top-level ejecutada dentro del isolate de background vía
+/// `Isolate.run`. Misma lógica de conversión YUV420 (BT.601) que antes,
+/// solo que ahora corre fuera del hilo principal.
+Uint8List _yuv420ToRgb(_YuvConversionArgs a) {
+  final rgb = Uint8List(a.width * a.height * 3);
+  int idx = 0;
+  for (int y = 0; y < a.height; y++) {
+    for (int x = 0; x < a.width; x++) {
+      final yy = a.yBytes[y * a.yStride + x] - 16;
+      final uvIdx = (y >> 1) * a.uvStride + (x >> 1) * a.uvPixelStride;
+      final uu = a.uBytes[uvIdx] - 128;
+      final vv = a.vBytes[uvIdx] - 128;
+      rgb[idx++] = ((298 * yy + 409 * vv + 128) >> 8).clamp(0, 255);
+      rgb[idx++] = ((298 * yy - 100 * uu - 208 * vv + 128) >> 8).clamp(0, 255);
+      rgb[idx++] = ((298 * yy + 516 * uu + 128) >> 8).clamp(0, 255);
+    }
+  }
+  return rgb;
 }
