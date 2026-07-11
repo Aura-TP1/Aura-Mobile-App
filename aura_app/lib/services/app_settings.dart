@@ -21,6 +21,8 @@ class AppSettings extends ChangeNotifier {
   static const _kTtsRepeatCooldownMsKey = 'tts_repeat_cooldown_ms';
   static const _kSttListenForMsKey = 'stt_listen_for_ms';
   static const _kSttPauseForMsKey = 'stt_pause_for_ms';
+  static const _kTestConditionKey = 'test_condition';
+  static const _kTestRunLabelKey = 'test_run_label';
 
   /// Velocidad de habla base usada antes de aplicar [voiceSpeed].
   static const double _baseRate = 0.45;
@@ -56,6 +58,16 @@ class AppSettings extends ChangeNotifier {
   /// Silencio máximo tolerado antes de cerrar la sesión de voz (ms).
   double sttPauseForMs = 4000;
 
+  /// Etiqueta de condición de prueba manual (para métricas), ej.
+  /// "same_background", "different_background", "similar_item_test".
+  /// Se guarda en cada intento de búsqueda (`search_metrics.jsonl`) para
+  /// poder filtrar los resultados después.
+  String testCondition = 'default';
+
+  /// Identificador de sesión/lote de pruebas elegido por el usuario antes
+  /// de empezar un conjunto de búsquedas (para métricas).
+  String testRunLabel = '';
+
   bool _loaded = false;
 
   /// Carga los valores guardados. Debe llamarse una vez al inicio (en
@@ -75,6 +87,8 @@ class AppSettings extends ChangeNotifier {
         prefs.getDouble(_kTtsRepeatCooldownMsKey) ?? ttsRepeatCooldownMs;
     sttListenForMs = prefs.getDouble(_kSttListenForMsKey) ?? sttListenForMs;
     sttPauseForMs = prefs.getDouble(_kSttPauseForMsKey) ?? sttPauseForMs;
+    testCondition = prefs.getString(_kTestConditionKey) ?? testCondition;
+    testRunLabel = prefs.getString(_kTestRunLabelKey) ?? testRunLabel;
   }
 
   /// Duración efectiva de escucha STT, con piso de seguridad.
@@ -172,5 +186,19 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_kSttPauseForMsKey, value);
+  }
+
+  Future<void> setTestCondition(String value) async {
+    testCondition = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kTestConditionKey, value);
+  }
+
+  Future<void> setTestRunLabel(String value) async {
+    testRunLabel = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kTestRunLabelKey, value);
   }
 }

@@ -15,6 +15,7 @@ import '../services/voice_input_service.dart';
 import '../services/tts.dart';
 import '../services/voice_commands.dart';
 import '../services/app_settings.dart';
+import '../services/metrics_logger.dart';
 import '../widgets/voice_text_fallback_sheet.dart';
 
 /// Modo de la pantalla de cámara: detección de objetos (YOLO) o lectura de
@@ -316,6 +317,17 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
       final frameMs = DateTime.now().difference(frameStart).inMilliseconds;
       _updateAdaptiveInterval(frameMs);
       _updatePerfMetrics(frameMs);
+
+      // Solo para métricas (instrumentación pura, no afecta el flujo).
+      // Fire-and-forget: MetricsLogger nunca lanza excepciones ni bloquea
+      // el bucle de frames.
+      if (_mode == CamMode.yolo) {
+        // ignore: discarded_futures
+        MetricsLogger.instance.logDetectionFrame(
+          frameLatencyMs: frameMs,
+          detections: dets,
+        );
+      }
 
       _isDetecting = false;
       if (!mounted || !_streamActive) return;

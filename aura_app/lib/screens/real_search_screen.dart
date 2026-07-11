@@ -14,6 +14,8 @@ import '../services/embedding_service_common.dart';
 import '../services/object_detector.dart';
 import '../services/tts.dart';
 import '../services/app_settings.dart';
+import '../services/metrics_logger.dart';
+import '../services/saved_objects_repository.dart';
 
 const Color _kAuraRed = Color(0xFFE53935);
 const Color _kAuraGreen = Color(0xFF2E7D32);
@@ -46,6 +48,7 @@ class _RealSearchScreenState extends State<RealSearchScreen>
   final EmbeddingService _embeddings = EmbeddingService();
   final ObjectDetector _detector = ObjectDetector();
   final AudioFeedback _audio = AudioFeedback();
+  final SavedObjectsRepository _savedObjectsRepo = SavedObjectsRepository();
 
   CameraController? _camera;
   bool _cameraReady = false;
@@ -164,6 +167,11 @@ class _RealSearchScreenState extends State<RealSearchScreen>
       }
 
       try {
+        // Solo para métricas: mide la latencia de este ciclo de escaneo
+        // (captura + embedding + comparación) de forma aditiva, sin alterar
+        // el flujo ni el timing real del loop.
+        final metricsStopwatch = Stopwatch()..start();
+
         final xfile = await c.takePicture();
         final bytes = await xfile.readAsBytes();
         final image = img.decodeImage(bytes);
@@ -216,6 +224,18 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         if (!mounted || _disposed) return;
         setState(() => _currentSimilarity = bestSim);
 
+        final decision = bestSim >= _threshold
+            ? 'found'
+            : (bestSim >= _kMaybeThreshold ? 'maybe' : 'none');
+
+        // Solo para métricas: similitud contra TODOS los objetos guardados,
+        // para detectar falsos positivos (otro objeto con mayor similitud
+        // que el objetivo). No afecta la decisión de match, que sigue
+        // basándose solo en widget.savedObject. Fire-and-forget: no se
+        // espera el resultado para no retrasar el siguiente frame.
+        // ignore: discarded_futures
+        _logSearchMetrics(frameEmb: frameEmb, bestSim: bestSim, decision: decision, stopwatch: metricsStopwatch);
+
         if (bestSim >= _threshold) {
           await _onFound();
           return;
@@ -227,6 +247,48 @@ class _RealSearchScreenState extends State<RealSearchScreen>
       }
 
       await Future.delayed(_frameInterval);
+    }
+  }
+
+  /// Solo para métricas (instrumentación pura, no afecta el flujo de
+  /// búsqueda real). Calcula la similitud del frame actual contra TODOS los
+  /// objetos guardados (para detectar falsos positivos por confusión con
+  /// otro objeto) y registra el intento de búsqueda en
+  /// `search_metrics.jsonl` vía [MetricsLogger]. Nunca lanza excepciones.
+  Future<void> _logSearchMetrics({
+    required List<double> frameEmb,
+    required double bestSim,
+    required String decision,
+    required Stopwatch stopwatch,
+  }) async {
+    try {
+      final allSavedObjects = await _savedObjectsRepo.getAll();
+      final Map<String, double> allSims = {};
+      for (final obj in allSavedObjects) {
+        double s = 0.0;
+        for (final e in obj.embeddings) {
+          final v = cosineSimilarity(e.embedding, frameEmb);
+          if (v > s) s = v;
+        }
+        if (s == 0.0 && obj.embedding.isNotEmpty) {
+          s = cosineSimilarity(obj.embedding, frameEmb);
+        }
+        allSims[obj.id.toString()] = s;
+      }
+
+      stopwatch.stop();
+
+      await MetricsLogger.instance.logSearchAttempt(
+        targetObjectId: widget.savedObject.id.toString(),
+        targetObjectName: widget.savedObject.name,
+        targetSimilarity: bestSim,
+        decision: decision,
+        latencyMs: stopwatch.elapsedMilliseconds,
+        storedObjectCount: allSavedObjects.length,
+        allObjectSimilarities: allSims,
+      );
+    } catch (e) {
+      debugPrint('RealSearchScreen metrics logging error: $e');
     }
   }
 

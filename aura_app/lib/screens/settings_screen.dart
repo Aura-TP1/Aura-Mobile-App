@@ -30,6 +30,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late double _ttsRepeatCooldownMs;
   late double _sttListenForMs;
   late double _sttPauseForMs;
+  late TextEditingController _testConditionController;
+  late TextEditingController _testRunLabelController;
   final String _appVersion = '7.1.0 (VISTA)';
   bool _isSignedIn = false;
   String? _userEmail;
@@ -48,6 +50,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _ttsRepeatCooldownMs = AppSettings.instance.ttsRepeatCooldownMs;
     _sttListenForMs = AppSettings.instance.sttListenForMs;
     _sttPauseForMs = AppSettings.instance.sttPauseForMs;
+    _testConditionController =
+        TextEditingController(text: AppSettings.instance.testCondition);
+    _testRunLabelController =
+        TextEditingController(text: AppSettings.instance.testRunLabel);
     _audio.init();
     _checkAuthStatus();
   }
@@ -162,6 +168,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void dispose() {
     _audio.stop();
     _audio.dispose();
+    _testConditionController.dispose();
+    _testRunLabelController.dispose();
     super.dispose();
   }
 
@@ -183,6 +191,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _buildVisualSection(),
               const SizedBox(height: 24),
               _buildTimingSection(),
+              const SizedBox(height: 24),
+              _buildTestTaggingSection(),
               const SizedBox(height: 24),
               _buildCameraSection(),
               const SizedBox(height: 24),
@@ -599,6 +609,108 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ],
           ),
+        ),
+      ],
+    );
+  }
+
+  /// Sección "Etiquetas de prueba (para métricas)": permite marcar cada
+  /// intento de búsqueda con una condición de prueba (ej. fondo distinto,
+  /// objetos similares) y un identificador de lote, para poder filtrar
+  /// `search_metrics.jsonl` después del análisis.
+  Widget _buildTestTaggingSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.science_outlined, color: Colors.white70, size: 20),
+              SizedBox(width: 8),
+              Text(
+                'ETIQUETAS DE PRUEBA (PARA MÉTRICAS)',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Se guarda en cada intento de búsqueda para poder filtrar los '
+            'resultados después.',
+            style: TextStyle(color: Colors.white38, fontSize: 12),
+          ),
+          const SizedBox(height: 16),
+          _buildTestTaggingField(
+            label: 'Condición de prueba',
+            helperText:
+                'Ej: same_background, different_background, similar_item_test',
+            controller: _testConditionController,
+            onChanged: (value) {
+              AppSettings.instance.setTestCondition(value);
+            },
+          ),
+          const SizedBox(height: 16),
+          _buildTestTaggingField(
+            label: 'Identificador de lote de pruebas',
+            helperText: 'Ej: sesion_2026_07_11_a',
+            controller: _testRunLabelController,
+            onChanged: (value) {
+              AppSettings.instance.setTestRunLabel(value);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTestTaggingField({
+    required String label,
+    required String helperText,
+    required TextEditingController controller,
+    required ValueChanged<String> onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white, fontSize: 14),
+        ),
+        const SizedBox(height: 8),
+        Semantics(
+          label: label,
+          hint: helperText,
+          textField: true,
+          child: TextField(
+            controller: controller,
+            onChanged: onChanged,
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: Colors.white.withOpacity(0.05),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          helperText,
+          style: const TextStyle(color: Colors.white38, fontSize: 12),
         ),
       ],
     );
