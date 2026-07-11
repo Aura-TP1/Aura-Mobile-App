@@ -294,6 +294,8 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         backgroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(
+          tooltip: 'Volver',
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           icon: const Icon(Icons.arrow_back, color: Colors.black),
           onPressed: () => Navigator.maybePop(context),
         ),
@@ -424,28 +426,32 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
           ),
         ),
         const SizedBox(width: 12),
-        GestureDetector(
-          onTap: _handleMicTap,
-          child: Container(
-            width: 60,
-            height: 60,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _isListeningMic ? _kAuraRed : _kAuraRed.withOpacity(0.1),
-              boxShadow: _isListeningMic
-                  ? [
-                      BoxShadow(
-                        color: _kAuraRed.withOpacity(0.35),
-                        blurRadius: 18,
-                        spreadRadius: 3,
-                      ),
-                    ]
-                  : [],
-            ),
-            child: Icon(
-              _isListeningMic ? Icons.mic : Icons.mic_none,
-              color: _isListeningMic ? Colors.white : _kAuraRed,
-              size: 28,
+        Semantics(
+          button: true,
+          label: _isListeningMic ? 'Escuchando' : 'Dictar nombre por voz',
+          child: GestureDetector(
+            onTap: _handleMicTap,
+            child: Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _isListeningMic ? _kAuraRed : _kAuraRed.withOpacity(0.1),
+                boxShadow: _isListeningMic
+                    ? [
+                        BoxShadow(
+                          color: _kAuraRed.withOpacity(0.35),
+                          blurRadius: 18,
+                          spreadRadius: 3,
+                        ),
+                      ]
+                    : [],
+              ),
+              child: Icon(
+                _isListeningMic ? Icons.mic : Icons.mic_none,
+                color: _isListeningMic ? Colors.white : _kAuraRed,
+                size: 28,
+              ),
             ),
           ),
         ),

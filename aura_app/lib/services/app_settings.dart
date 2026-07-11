@@ -15,6 +15,12 @@ class AppSettings extends ChangeNotifier {
   static const _kVolumeKey = 'volume';
   static const _kFontScaleKey = 'font_scale';
   static const _kSyncEnabledKey = 'sync_enabled';
+  static const _kScanIntervalMsKey = 'scan_interval_ms';
+  static const _kOcrDebounceMsKey = 'ocr_debounce_ms';
+  static const _kOcrCooldownMsKey = 'ocr_cooldown_ms';
+  static const _kTtsRepeatCooldownMsKey = 'tts_repeat_cooldown_ms';
+  static const _kSttListenForMsKey = 'stt_listen_for_ms';
+  static const _kSttPauseForMsKey = 'stt_pause_for_ms';
 
   /// Velocidad de habla base usada antes de aplicar [voiceSpeed].
   static const double _baseRate = 0.45;
@@ -31,6 +37,25 @@ class AppSettings extends ChangeNotifier {
   /// Sincronización en la nube habilitada.
   bool syncEnabled = false;
 
+  /// Intervalo entre cuadros analizados en la búsqueda por cámara (ms).
+  /// WCAG 2.2.1: tiempo ajustable en lugar de fijo (300ms por defecto).
+  double scanIntervalMs = 300;
+
+  /// Retraso de debounce antes de leer texto con OCR (ms).
+  double ocrDebounceMs = 800;
+
+  /// Tiempo mínimo entre lecturas repetidas de OCR (ms).
+  double ocrCooldownMs = 4000;
+
+  /// Tiempo mínimo entre repeticiones habladas del mismo mensaje TTS (ms).
+  double ttsRepeatCooldownMs = 3000;
+
+  /// Tiempo máximo que el reconocimiento de voz espera una frase (ms).
+  double sttListenForMs = 30000;
+
+  /// Silencio máximo tolerado antes de cerrar la sesión de voz (ms).
+  double sttPauseForMs = 4000;
+
   bool _loaded = false;
 
   /// Carga los valores guardados. Debe llamarse una vez al inicio (en
@@ -43,7 +68,38 @@ class AppSettings extends ChangeNotifier {
     volume = prefs.getDouble(_kVolumeKey) ?? volume;
     fontScale = prefs.getDouble(_kFontScaleKey) ?? fontScale;
     syncEnabled = prefs.getBool(_kSyncEnabledKey) ?? syncEnabled;
+    scanIntervalMs = prefs.getDouble(_kScanIntervalMsKey) ?? scanIntervalMs;
+    ocrDebounceMs = prefs.getDouble(_kOcrDebounceMsKey) ?? ocrDebounceMs;
+    ocrCooldownMs = prefs.getDouble(_kOcrCooldownMsKey) ?? ocrCooldownMs;
+    ttsRepeatCooldownMs =
+        prefs.getDouble(_kTtsRepeatCooldownMsKey) ?? ttsRepeatCooldownMs;
+    sttListenForMs = prefs.getDouble(_kSttListenForMsKey) ?? sttListenForMs;
+    sttPauseForMs = prefs.getDouble(_kSttPauseForMsKey) ?? sttPauseForMs;
   }
+
+  /// Duración efectiva de escucha STT, con piso de seguridad.
+  Duration get sttListenFor =>
+      Duration(milliseconds: sttListenForMs.clamp(5000, 60000).round());
+
+  /// Duración efectiva de pausa STT, con piso de seguridad.
+  Duration get sttPauseFor =>
+      Duration(milliseconds: sttPauseForMs.clamp(1000, 15000).round());
+
+  /// Duración efectiva del intervalo de escaneo, con piso de seguridad.
+  Duration get scanInterval =>
+      Duration(milliseconds: scanIntervalMs.clamp(150, 2000).round());
+
+  /// Duración efectiva del debounce de OCR, con piso de seguridad.
+  Duration get ocrDebounce =>
+      Duration(milliseconds: ocrDebounceMs.clamp(200, 3000).round());
+
+  /// Duración efectiva del cooldown de lectura OCR, con piso de seguridad.
+  Duration get ocrCooldown =>
+      Duration(milliseconds: ocrCooldownMs.clamp(1000, 10000).round());
+
+  /// Duración efectiva del cooldown de repetición TTS, con piso de seguridad.
+  Duration get ttsRepeatCooldown =>
+      Duration(milliseconds: ttsRepeatCooldownMs.clamp(500, 10000).round());
 
   /// Velocidad efectiva para `flutter_tts`, derivada de [voiceSpeed].
   double get ttsRate => (_baseRate * voiceSpeed).clamp(0.2, 1.0);
@@ -74,5 +130,47 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kSyncEnabledKey, value);
+  }
+
+  Future<void> setScanIntervalMs(double value) async {
+    scanIntervalMs = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kScanIntervalMsKey, value);
+  }
+
+  Future<void> setOcrDebounceMs(double value) async {
+    ocrDebounceMs = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kOcrDebounceMsKey, value);
+  }
+
+  Future<void> setOcrCooldownMs(double value) async {
+    ocrCooldownMs = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kOcrCooldownMsKey, value);
+  }
+
+  Future<void> setTtsRepeatCooldownMs(double value) async {
+    ttsRepeatCooldownMs = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kTtsRepeatCooldownMsKey, value);
+  }
+
+  Future<void> setSttListenForMs(double value) async {
+    sttListenForMs = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kSttListenForMsKey, value);
+  }
+
+  Future<void> setSttPauseForMs(double value) async {
+    sttPauseForMs = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kSttPauseForMsKey, value);
   }
 }

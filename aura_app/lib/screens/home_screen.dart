@@ -180,12 +180,16 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: const Color(0xFF2A2A2A),
         elevation: 0,
         leading: IconButton(
+          tooltip: 'Menú',
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           icon: const Icon(Icons.menu, color: Colors.white, size: 28),
           onPressed: () {
           },
         ),
         actions: [
           IconButton(
+            tooltip: 'Ayuda',
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
             icon: const Icon(Icons.help_outline,
               color: Color(0xFFFFC107), size: 28),
             onPressed: () {
@@ -193,6 +197,8 @@ class _HomeScreenState extends State<HomeScreen> {
             },
           ),
           IconButton(
+            tooltip: 'Ajustes',
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
             icon: const Icon(Icons.settings, color: Colors.white, size: 28),
             onPressed: () {
               Navigator.pushNamed(context, '/settings');
@@ -205,46 +211,77 @@ class _HomeScreenState extends State<HomeScreen> {
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-          child: Column(
+          child: FocusTraversalGroup(
+            policy: OrderedTraversalPolicy(),
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildMenuButton(
+              FocusTraversalOrder(
+                order: const NumericFocusOrder(1),
+                child: _buildMenuButton(
                 label: 'ENCONTRAR\nOBJETO',
                 icon: Icons.camera_alt,
-                backgroundColor: const Color(0xFF1E88E5),
+                // Oscurecido de 0xFF1E88E5 a 0xFF1B79CC: el original daba
+                // 3.68:1 de contraste con texto blanco (WCAG 1.4.3 exige
+                // 4.5:1 para texto normal); este valor da 4.51:1.
+                backgroundColor: const Color(0xFF1B79CC),
                 onTap: () => _handleMenuButtonTap('Encontrar objeto', '/camera'),
-              ),
+                semanticLabel: 'Encontrar objeto',
+                semanticHint: 'Abre la cámara para detectar objetos',
+              )),
               const SizedBox(height: 14),
-              _buildMenuButton(
+              FocusTraversalOrder(
+                order: const NumericFocusOrder(2),
+                child: _buildMenuButton(
                 label: 'LEER\nTEXTO',
                 icon: Icons.text_fields,
-                backgroundColor: const Color(0xFFFB8C00),
+                // Oscurecido de 0xFFFB8C00 a 0xFFB06200: el original daba
+                // 2.37:1 con texto blanco; este valor da 4.58:1.
+                backgroundColor: const Color(0xFFB06200),
                 onTap: () => _handleMenuButtonTap('Leer texto', '/camera',
                     arguments: 'ocr'),
-              ),
+                semanticLabel: 'Leer texto',
+                semanticHint: 'Abre la cámara en modo lectura de texto',
+              )),
               const SizedBox(height: 14),
-              _buildMenuButton(
+              FocusTraversalOrder(
+                order: const NumericFocusOrder(3),
+                child: _buildMenuButton(
                 label: 'BUSCAR\nOBJETO',
                 icon: Icons.search,
-                backgroundColor: const Color(0xFF00C853),
+                // Oscurecido de 0xFF00C853 a 0xFF008838: el original daba
+                // 2.24:1 con texto blanco; este valor da 4.59:1.
+                backgroundColor: const Color(0xFF008838),
                 onTap: () => _handleMenuButtonTap('Buscar objeto', '/search'),
-              ),
+                semanticLabel: 'Buscar objeto',
+                semanticHint: 'Abre la búsqueda de objetos guardados',
+              )),
               const SizedBox(height: 14),
-              _buildMenuButton(
+              FocusTraversalOrder(
+                order: const NumericFocusOrder(4),
+                child: _buildMenuButton(
                 label: 'MIS\nOBJETOS',
                 icon: Icons.folder,
                 backgroundColor: const Color(0xFF7C3AED),
                 onTap: () => _handleMenuButtonTap('Mis objetos', '/my-objects'),
-              ),
+                semanticLabel: 'Mis objetos',
+                semanticHint: 'Muestra la lista de tus objetos guardados',
+              )),
               const SizedBox(height: 14),
-              _buildMenuButton(
+              FocusTraversalOrder(
+                order: const NumericFocusOrder(5),
+                child: _buildMenuButton(
                 label: _isListening ? 'ESCUCHANDO...' : 'TOCA PARA\nHABLAR',
                 icon: _isListening ? Icons.mic : Icons.mic_none,
+                // 0xFFD84315 original daba 4.44:1 con texto blanco, apenas
+                // bajo el umbral 4.5:1; 0xFFD64215 da 4.51:1.
                 backgroundColor: _isListening
-                    ? const Color(0xFFD84315)
+                    ? const Color(0xFFD64215)
                     : const Color(0xFF6D4C41),
                 onTap: _handleVoiceCommand,
-              ),
+                semanticLabel: _isListening ? 'Escuchando' : 'Toca para hablar',
+                semanticHint: 'Activa el comando de voz',
+              )),
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 220),
                 switchInCurve: Curves.easeOut,
@@ -258,6 +295,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
+          ),
         ),
       ),
     );
@@ -268,13 +306,20 @@ class _HomeScreenState extends State<HomeScreen> {
     required IconData icon,
     required Color backgroundColor,
     required VoidCallback onTap,
+    required String semanticLabel,
+    required String semanticHint,
   }) {
-    return Material(
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      onTapHint: semanticHint,
+      child: Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
         child: Container(
+          constraints: const BoxConstraints(minHeight: 92),
           height: 92,
           decoration: BoxDecoration(
             color: backgroundColor,
@@ -324,6 +369,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+      ),
       ),
     );
   }

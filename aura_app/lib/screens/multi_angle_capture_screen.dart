@@ -209,6 +209,8 @@ class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
         backgroundColor: Colors.black,
         elevation: 0,
         leading: IconButton(
+          tooltip: 'Volver',
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.maybePop(context),
         ),
@@ -357,15 +359,19 @@ class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
               Expanded(
                 child: SizedBox(
                   height: 52,
-                  child: OutlinedButton(
-                    onPressed: _currentAngleIndex > 0 ? _moveToPreviousAngle : null,
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: _kAuraRed),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                  child: Semantics(
+                    button: true,
+                    label: 'Ángulo anterior',
+                    child: OutlinedButton(
+                      onPressed: _currentAngleIndex > 0 ? _moveToPreviousAngle : null,
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: _kAuraRed),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
+                      child: const Icon(Icons.arrow_back, color: _kAuraRed),
                     ),
-                    child: const Icon(Icons.arrow_back, color: _kAuraRed),
                   ),
                 ),
               ),
@@ -402,17 +408,21 @@ class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
               Expanded(
                 child: SizedBox(
                   height: 52,
-                  child: OutlinedButton(
-                    onPressed: _currentAngleIndex < CaptureAngle.values.length - 1
-                        ? _moveToNextAngle
-                        : null,
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: _kAuraRed),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                  child: Semantics(
+                    button: true,
+                    label: 'Ángulo siguiente',
+                    child: OutlinedButton(
+                      onPressed: _currentAngleIndex < CaptureAngle.values.length - 1
+                          ? _moveToNextAngle
+                          : null,
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: _kAuraRed),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
+                      child: const Icon(Icons.arrow_forward, color: _kAuraRed),
                     ),
-                    child: const Icon(Icons.arrow_forward, color: _kAuraRed),
                   ),
                 ),
               ),

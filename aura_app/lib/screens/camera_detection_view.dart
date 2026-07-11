@@ -14,6 +14,7 @@ import '../services/ocr_service.dart';
 import '../services/voice_input_service.dart';
 import '../services/tts.dart';
 import '../services/voice_commands.dart';
+import '../services/app_settings.dart';
 import '../widgets/voice_text_fallback_sheet.dart';
 
 /// Modo de la pantalla de cámara: detección de objetos (YOLO) o lectura de
@@ -92,8 +93,9 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   /// Timer de debounce: espera 800 ms de estabilidad antes de leer.
   Timer? _ocrDebounce;
 
-  static const Duration _ocrDebounceDelay = Duration(milliseconds: 800);
-  static const Duration _ocrReadCooldown = Duration(seconds: 4);
+  /// Ajustables en Ajustes > Tiempos y accesibilidad (WCAG 2.2.1).
+  Duration get _ocrDebounceDelay => AppSettings.instance.ocrDebounce;
+  Duration get _ocrReadCooldown => AppSettings.instance.ocrCooldown;
 
   /// Pausa entre chequeos mientras se espera a que termine la lectura TTS
   /// en curso (no se toman fotos nuevas durante ese tiempo).
@@ -773,6 +775,8 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
         child: Row(
           children: [
             IconButton(
+              tooltip: 'Volver',
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
               icon: const Icon(Icons.arrow_back, color: Colors.white),
               onPressed: () => Navigator.of(context).maybePop(),
             ),
@@ -860,28 +864,32 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
                 label: 'Voz',
                 onTap: _handleVoiceTap,
               ),
-              GestureDetector(
-                onTap: _streamActive ? _stopDetection : _startDetection,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width: 72,
-                  height: 72,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: _streamActive ? Colors.red : Colors.white,
-                    boxShadow: [
-                      BoxShadow(
-                        color: (_streamActive ? Colors.red : Colors.white)
-                            .withOpacity(0.4),
-                        blurRadius: 20,
-                        spreadRadius: 4,
-                      ),
-                    ],
-                  ),
-                  child: Icon(
-                    _streamActive ? Icons.stop_rounded : Icons.play_arrow_rounded,
-                    color: _streamActive ? Colors.white : Colors.black,
-                    size: 36,
+              Semantics(
+                button: true,
+                label: _streamActive ? 'Detener detección' : 'Iniciar detección',
+                child: GestureDetector(
+                  onTap: _streamActive ? _stopDetection : _startDetection,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _streamActive ? Colors.red : Colors.white,
+                      boxShadow: [
+                        BoxShadow(
+                          color: (_streamActive ? Colors.red : Colors.white)
+                              .withOpacity(0.4),
+                          blurRadius: 20,
+                          spreadRadius: 4,
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      _streamActive ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                      color: _streamActive ? Colors.white : Colors.black,
+                      size: 36,
+                    ),
                   ),
                 ),
               ),
@@ -935,33 +943,41 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   }
 
   Widget _buildDetectionBadge(Detection d) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.2)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.visibility, color: Colors.white70, size: 18),
-          const SizedBox(width: 10),
-          Text(
-            d.label.toUpperCase(),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 2,
+    final pct = (d.confidence * 100).toStringAsFixed(0);
+    return Semantics(
+      label: 'Detectado: ${d.label}, confianza $pct%',
+      liveRegion: true,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withOpacity(0.2)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.visibility, color: Colors.white70, size: 18),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(
+                d.label.toUpperCase(),
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 2,
+                ),
+              ),
             ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            '${(d.confidence * 100).toStringAsFixed(0)}%',
-            style: const TextStyle(color: Colors.white54, fontSize: 14),
-          ),
-        ],
+            const SizedBox(width: 10),
+            Text(
+              '$pct%',
+              style: const TextStyle(color: Colors.white54, fontSize: 14),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -984,30 +1000,36 @@ class _IconButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final active = onTap != null;
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 50,
-            height: 50,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: active
-                  ? Colors.white.withOpacity(0.15)
-                  : Colors.white.withOpacity(0.05),
+    return Semantics(
+      button: true,
+      label: label,
+      enabled: active,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 50,
+              height: 50,
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: active
+                    ? Colors.white.withOpacity(0.15)
+                    : Colors.white.withOpacity(0.05),
+              ),
+              child: Icon(icon,
+                  color: active ? Colors.white : Colors.white30, size: 22),
             ),
-            child: Icon(icon,
-                color: active ? Colors.white : Colors.white30, size: 22),
-          ),
-          const SizedBox(height: 4),
-          Text(label,
-              style: TextStyle(
-                color: active ? Colors.white60 : Colors.white24,
-                fontSize: 10,
-              )),
-        ],
+            const SizedBox(height: 4),
+            Text(label,
+                style: TextStyle(
+                  color: active ? Colors.white60 : Colors.white24,
+                  fontSize: 10,
+                )),
+          ],
+        ),
       ),
     );
   }

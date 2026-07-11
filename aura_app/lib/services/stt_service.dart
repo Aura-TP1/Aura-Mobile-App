@@ -4,6 +4,8 @@ import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'app_settings.dart';
+
 /// Wrapper reutilizable sobre `speech_to_text`.
 ///
 /// Diseñado para ser usado desde cualquier pantalla que necesite capturar
@@ -128,8 +130,10 @@ class SttService {
   Future<void> _listen() => _speech.listen(
         onResult: _onSpeechResult,
         localeId: _localeId,
-        listenFor: const Duration(seconds: 30),
-        pauseFor: const Duration(seconds: 4),
+        // Ajustables en Ajustes > Tiempos y accesibilidad (WCAG 2.2.1);
+        // 30 s / 4 s por defecto.
+        listenFor: AppSettings.instance.sttListenFor,
+        pauseFor: AppSettings.instance.sttPauseFor,
         listenOptions: SpeechListenOptions(
           partialResults: true,
           cancelOnError: false,

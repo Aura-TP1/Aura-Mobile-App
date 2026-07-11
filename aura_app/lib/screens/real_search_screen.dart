@@ -13,6 +13,7 @@ import '../services/embedding_service.dart';
 import '../services/embedding_service_common.dart';
 import '../services/object_detector.dart';
 import '../services/tts.dart';
+import '../services/app_settings.dart';
 
 const Color _kAuraRed = Color(0xFFE53935);
 const Color _kAuraGreen = Color(0xFF2E7D32);
@@ -59,7 +60,9 @@ class _RealSearchScreenState extends State<RealSearchScreen>
   late final AnimationController _sweepController;
   late final AnimationController _foundController;
 
-  static const Duration _frameInterval = Duration(milliseconds: 300);
+  /// Intervalo entre cuadros analizados. Ajustable en Ajustes (WCAG 2.2.1);
+  /// 300 ms por defecto.
+  Duration get _frameInterval => AppSettings.instance.scanInterval;
 
   /// Umbral base de match confirmado. NO se modifica (requisito).
   static const double _threshold = 0.75;
@@ -309,6 +312,8 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           backgroundColor: Colors.transparent,
           elevation: 0,
           leading: IconButton(
+            tooltip: 'Volver',
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
             icon: const Icon(Icons.arrow_back, color: Colors.white),
             onPressed: _handleBack,
           ),
@@ -421,34 +426,60 @@ class _RealSearchScreenState extends State<RealSearchScreen>
 
   Widget _buildSimilarityBar() {
     final pct = (_currentSimilarity / _threshold).clamp(0.0, 1.0);
-    final color = pct > 0.85 ? _kAuraGreen : _kAuraRed;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              'Similitud con el objeto',
-              style: TextStyle(color: Colors.white60, fontSize: 12),
-            ),
-            Text(
-              '${(_currentSimilarity * 100).toStringAsFixed(0)}%',
-              style: const TextStyle(color: Colors.white60, fontSize: 12),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: pct,
-            minHeight: 7,
-            backgroundColor: Colors.white12,
-            valueColor: AlwaysStoppedAnimation<Color>(color),
+    final isClose = pct > 0.85;
+    final color = isClose ? _kAuraGreen : _kAuraRed;
+    final pctInt = (_currentSimilarity * 100).toStringAsFixed(0);
+    // No dependemos solo del color: agregamos texto/ícono de estado
+    // (WCAG 1.4.1) además de la etiqueta accesible (WCAG 4.1.2).
+    final stateLabel = isClose ? 'Cerca' : 'Buscando';
+    return Semantics(
+      label: 'Similitud: $pctInt%, $stateLabel',
+      value: '$pctInt%',
+      liveRegion: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Flexible(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isClose ? Icons.trending_up : Icons.search,
+                      color: Colors.white60,
+                      size: 14,
+                    ),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        'Similitud con el objeto ($stateLabel)',
+                        style: const TextStyle(color: Colors.white60, fontSize: 12),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                '$pctInt%',
+                style: const TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+            ],
           ),
-        ),
-      ],
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: pct,
+              minHeight: 7,
+              backgroundColor: Colors.white12,
+              valueColor: AlwaysStoppedAnimation<Color>(color),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

@@ -241,6 +241,8 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
         backgroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(
+          tooltip: 'Volver',
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           icon: const Icon(Icons.arrow_back, color: Colors.black),
           onPressed: () => Navigator.maybePop(context),
         ),
@@ -255,6 +257,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
         actions: [
           IconButton(
             tooltip: 'Probar cámara real',
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
             icon: const Icon(Icons.videocam, color: Colors.black),
             onPressed: () => Navigator.pushNamed(context, '/camera'),
           ),
@@ -263,17 +266,28 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Column(
+          child: FocusTraversalGroup(
+            policy: OrderedTraversalPolicy(),
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 16),
-              _buildMicButton(),
+              FocusTraversalOrder(
+                order: const NumericFocusOrder(1),
+                child: _buildMicButton(),
+              ),
               const SizedBox(height: 16),
               _buildInstructionText(),
               const SizedBox(height: 16),
-              _buildTargetInput(),
+              FocusTraversalOrder(
+                order: const NumericFocusOrder(2),
+                child: _buildTargetInput(),
+              ),
               const SizedBox(height: 20),
-              _buildActivateButton(),
+              FocusTraversalOrder(
+                order: const NumericFocusOrder(3),
+                child: _buildActivateButton(),
+              ),
               const SizedBox(height: 24),
               _buildSearchStatus(),
               const SizedBox(height: 16),
@@ -288,8 +302,14 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
               // User will point camera at an object and say "Guarda esto."
               // This requires camera + speech recognition integration — implement later.
               const SizedBox(height: 8),
-              Expanded(child: _buildObjectsList()),
+              Expanded(
+                child: FocusTraversalOrder(
+                  order: const NumericFocusOrder(4),
+                  child: _buildObjectsList(),
+                ),
+              ),
             ],
+          ),
           ),
         ),
       ),
@@ -299,7 +319,10 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
   // Botón micrófono grande con indicador de "escuchando".
   Widget _buildMicButton() {
     return Center(
-      child: GestureDetector(
+      child: Semantics(
+        button: true,
+        label: _isListening ? 'Escuchando' : 'Toca para hablar el nombre del objeto',
+        child: GestureDetector(
         onTap: _handleMicTap,
         child: AnimatedBuilder(
           animation: _pulseController,
@@ -335,6 +358,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
               ),
             );
           },
+        ),
         ),
       ),
     );
@@ -474,31 +498,38 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
             child: const Icon(Icons.delete, color: Colors.white),
           ),
           onDismissed: (_) => _removeObject(index),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => _selectFromList(obj),
-            child: Container(
-              height: kMinButtonHeight,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                border: Border.all(color: kAuraRed, width: 2.5),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      obj.name,
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.black,
+          child: Semantics(
+            button: true,
+            label: obj.name,
+            onTapHint: 'Buscar este objeto',
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => _selectFromList(obj),
+              child: Container(
+                constraints: const BoxConstraints(minHeight: kMinButtonHeight),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: kAuraRed, width: 2.5),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        obj.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black,
+                        ),
                       ),
                     ),
-                  ),
-                  const Icon(Icons.chevron_right, color: Colors.grey),
-                ],
+                    const Icon(Icons.chevron_right, color: Colors.grey),
+                  ],
+                ),
               ),
             ),
           ),

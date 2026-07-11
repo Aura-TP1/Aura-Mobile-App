@@ -24,6 +24,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late double _voiceSpeed;
   late double _volume;
   late double _fontScale;
+  late double _scanIntervalMs;
+  late double _ocrDebounceMs;
+  late double _ocrCooldownMs;
+  late double _ttsRepeatCooldownMs;
+  late double _sttListenForMs;
+  late double _sttPauseForMs;
   final String _appVersion = '7.1.0 (VISTA)';
   bool _isSignedIn = false;
   String? _userEmail;
@@ -36,6 +42,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _voiceSpeed = AppSettings.instance.voiceSpeed;
     _volume = AppSettings.instance.volume;
     _fontScale = AppSettings.instance.fontScale;
+    _scanIntervalMs = AppSettings.instance.scanIntervalMs;
+    _ocrDebounceMs = AppSettings.instance.ocrDebounceMs;
+    _ocrCooldownMs = AppSettings.instance.ocrCooldownMs;
+    _ttsRepeatCooldownMs = AppSettings.instance.ttsRepeatCooldownMs;
+    _sttListenForMs = AppSettings.instance.sttListenForMs;
+    _sttPauseForMs = AppSettings.instance.sttPauseForMs;
     _audio.init();
     _checkAuthStatus();
   }
@@ -159,7 +171,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       backgroundColor: Colors.black,
       body: SafeArea(
         child: SingleChildScrollView(
-          child: Column(
+          child: FocusTraversalGroup(
+            policy: ReadingOrderTraversalPolicy(),
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildHeader(),
@@ -168,11 +182,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 24),
               _buildVisualSection(),
               const SizedBox(height: 24),
+              _buildTimingSection(),
+              const SizedBox(height: 24),
               _buildCameraSection(),
               const SizedBox(height: 24),
               _buildAdvancedSection(),
               const SizedBox(height: 40),
             ],
+          ),
           ),
         ),
       ),
@@ -184,16 +201,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Row(
         children: [
-          GestureDetector(
-            onTap: () => Navigator.of(context).pop(),
-            child: Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity( 0.1),
-                borderRadius: BorderRadius.circular(8),
+          Semantics(
+            button: true,
+            label: 'Volver',
+            child: GestureDetector(
+              onTap: () => Navigator.of(context).pop(),
+              child: Container(
+                width: 48,
+                height: 48,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity( 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
               ),
-              child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
             ),
           ),
           const SizedBox(width: 16),
@@ -414,6 +436,171 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  /// Sección "Tiempos y accesibilidad" (WCAG 2.2.1): permite ajustar los
+  /// tiempos que antes estaban fijos en el código (intervalo de escaneo,
+  /// debounce/cooldown de OCR y cooldown de repetición del TTS), para
+  /// usuarios que necesitan más (o menos) tiempo.
+  Widget _buildTimingSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.timer_outlined, color: Colors.white70, size: 20),
+              SizedBox(width: 8),
+              Text(
+                'TIEMPOS Y ACCESIBILIDAD',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          _buildTimingSlider(
+            label: 'Velocidad de búsqueda (cámara)',
+            value: _scanIntervalMs,
+            min: 300,
+            max: 1000,
+            divisions: 7,
+            unitSuffix: ' ms',
+            onChanged: (value) {
+              setState(() => _scanIntervalMs = value);
+              AppSettings.instance.setScanIntervalMs(value);
+            },
+          ),
+          const SizedBox(height: 16),
+          _buildTimingSlider(
+            label: 'Retraso antes de leer texto (OCR)',
+            value: _ocrDebounceMs,
+            min: 400,
+            max: 2000,
+            divisions: 8,
+            unitSuffix: ' ms',
+            onChanged: (value) {
+              setState(() => _ocrDebounceMs = value);
+              AppSettings.instance.setOcrDebounceMs(value);
+            },
+          ),
+          const SizedBox(height: 16),
+          _buildTimingSlider(
+            label: 'Espera entre lecturas repetidas (OCR)',
+            value: _ocrCooldownMs,
+            min: 2000,
+            max: 10000,
+            divisions: 8,
+            unitSuffix: ' ms',
+            onChanged: (value) {
+              setState(() => _ocrCooldownMs = value);
+              AppSettings.instance.setOcrCooldownMs(value);
+            },
+          ),
+          const SizedBox(height: 16),
+          _buildTimingSlider(
+            label: 'Espera antes de repetir un aviso de voz',
+            value: _ttsRepeatCooldownMs,
+            min: 1000,
+            max: 8000,
+            divisions: 7,
+            unitSuffix: ' ms',
+            onChanged: (value) {
+              setState(() => _ttsRepeatCooldownMs = value);
+              AppSettings.instance.setTtsRepeatCooldownMs(value);
+            },
+          ),
+          const SizedBox(height: 16),
+          _buildTimingSlider(
+            label: 'Tiempo máximo para hablar un comando',
+            value: _sttListenForMs,
+            min: 10000,
+            max: 60000,
+            divisions: 10,
+            unitSuffix: ' ms',
+            onChanged: (value) {
+              setState(() => _sttListenForMs = value);
+              AppSettings.instance.setSttListenForMs(value);
+            },
+          ),
+          const SizedBox(height: 16),
+          _buildTimingSlider(
+            label: 'Silencio permitido antes de dejar de escuchar',
+            value: _sttPauseForMs,
+            min: 2000,
+            max: 10000,
+            divisions: 8,
+            unitSuffix: ' ms',
+            onChanged: (value) {
+              setState(() => _sttPauseForMs = value);
+              AppSettings.instance.setSttPauseForMs(value);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimingSlider({
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required String unitSuffix,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white, fontSize: 14),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.white.withOpacity(0.1)),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Semantics(
+                  label: label,
+                  value: '${value.round()}$unitSuffix',
+                  child: Slider(
+                    value: value,
+                    min: min,
+                    max: max,
+                    divisions: divisions,
+                    onChanged: onChanged,
+                    activeColor: const Color(0xFF2196F3),
+                    inactiveColor: Colors.white.withOpacity(0.1),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 64,
+                child: Text(
+                  '${value.round()}$unitSuffix',
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
