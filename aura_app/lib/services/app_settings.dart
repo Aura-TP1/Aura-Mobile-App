@@ -22,6 +22,7 @@ class AppSettings extends ChangeNotifier {
   static const _kSttListenForMsKey = 'stt_listen_for_ms';
   static const _kSttPauseForMsKey = 'stt_pause_for_ms';
   static const _kUseYoloInt8Key = 'use_yolo_int8';
+  static const _kUseEmbeddingInt8Key = 'use_embedding_int8';
   static const _kTestConditionKey = 'test_condition';
   static const _kTestRunLabelKey = 'test_run_label';
 
@@ -46,6 +47,12 @@ class AppSettings extends ChangeNotifier {
   /// (o dejar que el usuario lo apague desde Ajustes) si la detección
   /// empeora notablemente.
   bool useYoloInt8 = true;
+
+  /// Si es `true`, el embedding MobileNetV2 usa la variante cuantizada INT8
+  /// (`assets/mobilenetv2_embeddings_int8.tflite`) en vez del float32
+  /// original. Default `true`: los datos guardados hasta ahora son de
+  /// prueba, no producción, así que no hay compatibilidad que romper.
+  bool useEmbeddingInt8 = true;
 
   /// Intervalo entre cuadros analizados en la búsqueda por cámara (ms).
   /// WCAG 2.2.1: tiempo ajustable en lugar de fijo (300ms por defecto).
@@ -89,6 +96,8 @@ class AppSettings extends ChangeNotifier {
     fontScale = prefs.getDouble(_kFontScaleKey) ?? fontScale;
     syncEnabled = prefs.getBool(_kSyncEnabledKey) ?? syncEnabled;
     useYoloInt8 = prefs.getBool(_kUseYoloInt8Key) ?? useYoloInt8;
+    useEmbeddingInt8 =
+        prefs.getBool(_kUseEmbeddingInt8Key) ?? useEmbeddingInt8;
     scanIntervalMs = prefs.getDouble(_kScanIntervalMsKey) ?? scanIntervalMs;
     ocrDebounceMs = prefs.getDouble(_kOcrDebounceMsKey) ?? ocrDebounceMs;
     ocrCooldownMs = prefs.getDouble(_kOcrCooldownMsKey) ?? ocrCooldownMs;
@@ -160,6 +169,13 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kUseYoloInt8Key, value);
+  }
+
+  Future<void> setUseEmbeddingInt8(bool value) async {
+    useEmbeddingInt8 = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kUseEmbeddingInt8Key, value);
   }
 
   Future<void> setScanIntervalMs(double value) async {

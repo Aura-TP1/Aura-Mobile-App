@@ -42,7 +42,8 @@ class SaveObjectScreen extends StatefulWidget {
 class _SaveObjectScreenState extends State<SaveObjectScreen> {
   final AudioFeedback _audio = AudioFeedback();
   final SavedObjectsRepository _repo = SavedObjectsRepository();
-  final EmbeddingService _embeddings = EmbeddingService();
+  final EmbeddingService _embeddings =
+      EmbeddingService(useInt8: AppSettings.instance.useEmbeddingInt8);
   final ObjectDetector _detector =
       ObjectDetector(useInt8: AppSettings.instance.useYoloInt8);
   late final VoiceInputService _voice = VoiceInputService(_audio);

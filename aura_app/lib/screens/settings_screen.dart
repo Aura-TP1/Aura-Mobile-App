@@ -33,6 +33,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late TextEditingController _testConditionController;
   late TextEditingController _testRunLabelController;
   late bool _useYoloInt8;
+  late bool _useEmbeddingInt8;
   final String _appVersion = '7.1.0 (VISTA)';
   bool _isSignedIn = false;
   String? _userEmail;
@@ -56,6 +57,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _testRunLabelController =
         TextEditingController(text: AppSettings.instance.testRunLabel);
     _useYoloInt8 = AppSettings.instance.useYoloInt8;
+    _useEmbeddingInt8 = AppSettings.instance.useEmbeddingInt8;
     _audio.init();
     _checkAuthStatus();
   }
@@ -779,6 +781,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     onChanged: (value) {
                       setState(() => _useYoloInt8 = value);
                       AppSettings.instance.setUseYoloInt8(value);
+                    },
+                    activeColor: const Color(0xFF2196F3),
+                    inactiveTrackColor: Colors.white24,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white.withOpacity(0.1)),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Semantics(
+              toggled: _useEmbeddingInt8,
+              label: 'Usar embedding MobileNetV2 cuantizado INT8',
+              child: Row(
+                children: [
+                  const Icon(Icons.blur_on, color: Colors.white70, size: 20),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Usar embedding INT8',
+                            style: TextStyle(color: Colors.white, fontSize: 14)),
+                        Text(
+                          'Reconocimiento de objetos guardados. Requiere volver a '
+                          'guardar tus objetos si cambias esto luego de tenerlos '
+                          'guardados con el otro modelo.',
+                          style: TextStyle(color: Colors.white54, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: _useEmbeddingInt8,
+                    onChanged: (value) {
+                      setState(() => _useEmbeddingInt8 = value);
+                      AppSettings.instance.setUseEmbeddingInt8(value);
                     },
                     activeColor: const Color(0xFF2196F3),
                     inactiveTrackColor: Colors.white24,

@@ -43,7 +43,8 @@ class MultiAngleCaptureScreen extends StatefulWidget {
 
 class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
   final AudioFeedback _audio = AudioFeedback();
-  final EmbeddingService _embeddings = EmbeddingService();
+  final EmbeddingService _embeddings =
+      EmbeddingService(useInt8: AppSettings.instance.useEmbeddingInt8);
   final ObjectDetector _detector =
       ObjectDetector(useInt8: AppSettings.instance.useYoloInt8);
 
