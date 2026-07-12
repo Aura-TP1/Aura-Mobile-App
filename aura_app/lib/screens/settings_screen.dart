@@ -32,6 +32,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late double _sttPauseForMs;
   late TextEditingController _testConditionController;
   late TextEditingController _testRunLabelController;
+  late bool _useYoloInt8;
   final String _appVersion = '7.1.0 (VISTA)';
   bool _isSignedIn = false;
   String? _userEmail;
@@ -54,6 +55,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         TextEditingController(text: AppSettings.instance.testCondition);
     _testRunLabelController =
         TextEditingController(text: AppSettings.instance.testRunLabel);
+    _useYoloInt8 = AppSettings.instance.useYoloInt8;
     _audio.init();
     _checkAuthStatus();
   }
@@ -193,6 +195,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _buildTimingSection(),
               const SizedBox(height: 24),
               _buildTestTaggingSection(),
+              const SizedBox(height: 24),
+              _buildModelSection(),
               const SizedBox(height: 24),
               _buildCameraSection(),
               const SizedBox(height: 24),
@@ -713,6 +717,78 @@ class _SettingsScreenState extends State<SettingsScreen> {
           style: const TextStyle(color: Colors.white38, fontSize: 12),
         ),
       ],
+    );
+  }
+
+  /// Toggle para comparar el detector YOLOv8n float32 vs. la variante INT8
+  /// (más liviana, ~3.3MB vs ~12.7MB). Activo por defecto mientras se
+  /// valida su precisión — si empeora notablemente la detección, apágalo
+  /// aquí para volver al modelo float32 original sin tocar código.
+  Widget _buildModelSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.memory, color: Colors.white70, size: 20),
+              SizedBox(width: 8),
+              Text(
+                'MODELO DE DETECCIÓN',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white.withOpacity(0.1)),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Semantics(
+              toggled: _useYoloInt8,
+              label: 'Usar YOLOv8n cuantizado INT8',
+              child: Row(
+                children: [
+                  const Icon(Icons.speed, color: Colors.white70, size: 20),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Usar YOLOv8n INT8',
+                            style: TextStyle(color: Colors.white, fontSize: 14)),
+                        Text(
+                          'Modelo más liviano/rápido. Requiere reiniciar la cámara '
+                          'para aplicarse. Si notas peor detección, apágalo.',
+                          style: TextStyle(color: Colors.white54, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: _useYoloInt8,
+                    onChanged: (value) {
+                      setState(() => _useYoloInt8 = value);
+                      AppSettings.instance.setUseYoloInt8(value);
+                    },
+                    activeColor: const Color(0xFF2196F3),
+                    inactiveTrackColor: Colors.white24,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

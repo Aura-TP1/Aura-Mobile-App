@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 
 import '../models/saved_object.dart';
+import '../services/app_settings.dart';
 import '../services/detection_crop.dart';
 import '../services/embedding_service.dart';
 import '../services/object_detector.dart';
@@ -43,7 +44,8 @@ class MultiAngleCaptureScreen extends StatefulWidget {
 class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
   final AudioFeedback _audio = AudioFeedback();
   final EmbeddingService _embeddings = EmbeddingService();
-  final ObjectDetector _detector = ObjectDetector();
+  final ObjectDetector _detector =
+      ObjectDetector(useInt8: AppSettings.instance.useYoloInt8);
 
   CameraController? _camera;
   bool _cameraReady = false;

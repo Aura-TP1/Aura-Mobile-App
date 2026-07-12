@@ -21,6 +21,7 @@ class AppSettings extends ChangeNotifier {
   static const _kTtsRepeatCooldownMsKey = 'tts_repeat_cooldown_ms';
   static const _kSttListenForMsKey = 'stt_listen_for_ms';
   static const _kSttPauseForMsKey = 'stt_pause_for_ms';
+  static const _kUseYoloInt8Key = 'use_yolo_int8';
   static const _kTestConditionKey = 'test_condition';
   static const _kTestRunLabelKey = 'test_run_label';
 
@@ -38,6 +39,13 @@ class AppSettings extends ChangeNotifier {
 
   /// Sincronización en la nube habilitada.
   bool syncEnabled = false;
+
+  /// Si es `true`, YOLOv8n usa el modelo cuantizado INT8
+  /// (`assets/yolov8n_int8.tflite`) en vez del float32 original.
+  /// Default `true` mientras se valida su precisión — revertir a `false`
+  /// (o dejar que el usuario lo apague desde Ajustes) si la detección
+  /// empeora notablemente.
+  bool useYoloInt8 = true;
 
   /// Intervalo entre cuadros analizados en la búsqueda por cámara (ms).
   /// WCAG 2.2.1: tiempo ajustable en lugar de fijo (300ms por defecto).
@@ -80,6 +88,7 @@ class AppSettings extends ChangeNotifier {
     volume = prefs.getDouble(_kVolumeKey) ?? volume;
     fontScale = prefs.getDouble(_kFontScaleKey) ?? fontScale;
     syncEnabled = prefs.getBool(_kSyncEnabledKey) ?? syncEnabled;
+    useYoloInt8 = prefs.getBool(_kUseYoloInt8Key) ?? useYoloInt8;
     scanIntervalMs = prefs.getDouble(_kScanIntervalMsKey) ?? scanIntervalMs;
     ocrDebounceMs = prefs.getDouble(_kOcrDebounceMsKey) ?? ocrDebounceMs;
     ocrCooldownMs = prefs.getDouble(_kOcrCooldownMsKey) ?? ocrCooldownMs;
@@ -144,6 +153,13 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kSyncEnabledKey, value);
+  }
+
+  Future<void> setUseYoloInt8(bool value) async {
+    useYoloInt8 = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kUseYoloInt8Key, value);
   }
 
   Future<void> setScanIntervalMs(double value) async {

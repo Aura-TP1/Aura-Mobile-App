@@ -41,7 +41,8 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   List<CameraDescription> _cameras = [];
   int _selectedCameraIdx = 0;
 
-  final ObjectDetector _detector = ObjectDetector();
+  final ObjectDetector _detector =
+      ObjectDetector(useInt8: AppSettings.instance.useYoloInt8);
   final OcrService _ocr = OcrService();
   final AudioFeedback _audio = AudioFeedback();
   late final VoiceInputService _voice = VoiceInputService(_audio);

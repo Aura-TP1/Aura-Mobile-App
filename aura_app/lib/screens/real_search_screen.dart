@@ -46,7 +46,8 @@ class RealSearchScreen extends StatefulWidget {
 class _RealSearchScreenState extends State<RealSearchScreen>
     with TickerProviderStateMixin {
   final EmbeddingService _embeddings = EmbeddingService();
-  final ObjectDetector _detector = ObjectDetector();
+  final ObjectDetector _detector =
+      ObjectDetector(useInt8: AppSettings.instance.useYoloInt8);
   final AudioFeedback _audio = AudioFeedback();
   final SavedObjectsRepository _savedObjectsRepo = SavedObjectsRepository();
 

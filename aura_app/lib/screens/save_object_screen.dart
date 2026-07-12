@@ -43,7 +43,8 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
   final AudioFeedback _audio = AudioFeedback();
   final SavedObjectsRepository _repo = SavedObjectsRepository();
   final EmbeddingService _embeddings = EmbeddingService();
-  final ObjectDetector _detector = ObjectDetector();
+  final ObjectDetector _detector =
+      ObjectDetector(useInt8: AppSettings.instance.useYoloInt8);
   late final VoiceInputService _voice = VoiceInputService(_audio);
   final GoogleAuthService _auth = GoogleAuthService();
   final BackendService _backend = BackendService();
