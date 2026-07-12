@@ -44,6 +44,10 @@ android {
         }
         release {
             signingConfig = signingConfigs.getByName("teamDebug")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }
