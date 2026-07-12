@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show ProcessInfo;
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -13,6 +14,8 @@ import '../services/ocr_service.dart';
 import '../services/voice_input_service.dart';
 import '../services/tts.dart';
 import '../services/voice_commands.dart';
+import '../services/app_settings.dart';
+import '../services/metrics_logger.dart';
 import '../widgets/voice_text_fallback_sheet.dart';
 
 /// Modo de la pantalla de cámara: detección de objetos (YOLO) o lectura de
@@ -38,7 +41,8 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   List<CameraDescription> _cameras = [];
   int _selectedCameraIdx = 0;
 
-  final ObjectDetector _detector = ObjectDetector();
+  final ObjectDetector _detector =
+      ObjectDetector(useInt8: AppSettings.instance.useYoloInt8);
   final OcrService _ocr = OcrService();
   final AudioFeedback _audio = AudioFeedback();
   late final VoiceInputService _voice = VoiceInputService(_audio);
@@ -91,8 +95,9 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   /// Timer de debounce: espera 800 ms de estabilidad antes de leer.
   Timer? _ocrDebounce;
 
-  static const Duration _ocrDebounceDelay = Duration(milliseconds: 800);
-  static const Duration _ocrReadCooldown = Duration(seconds: 4);
+  /// Ajustables en Ajustes > Tiempos y accesibilidad (WCAG 2.2.1).
+  Duration get _ocrDebounceDelay => AppSettings.instance.ocrDebounce;
+  Duration get _ocrReadCooldown => AppSettings.instance.ocrCooldown;
 
   /// Pausa entre chequeos mientras se espera a que termine la lectura TTS
   /// en curso (no se toman fotos nuevas durante ese tiempo).
@@ -302,13 +307,28 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
 
     _isDetecting = true;
     final frameStart = DateTime.now(); // incluye conversión + inferencia
-    final image = _convertCameraImage(frame);
-    if (image == null) { _isDetecting = false; return; }
+    _convertCameraImageAsync(frame).then((image) {
+      if (image == null) { _isDetecting = false; return; }
+      _handleConvertedFrame(image, frameStart);
+    });
+  }
 
+  void _handleConvertedFrame(img.Image image, DateTime frameStart) {
     _detector.detect(image).then((dets) {
       final frameMs = DateTime.now().difference(frameStart).inMilliseconds;
       _updateAdaptiveInterval(frameMs);
       _updatePerfMetrics(frameMs);
+
+      // Solo para métricas (instrumentación pura, no afecta el flujo).
+      // Fire-and-forget: MetricsLogger nunca lanza excepciones ni bloquea
+      // el bucle de frames.
+      if (_mode == CamMode.yolo) {
+        // ignore: discarded_futures
+        MetricsLogger.instance.logDetectionFrame(
+          frameLatencyMs: frameMs,
+          detections: dets,
+        );
+      }
 
       _isDetecting = false;
       if (!mounted || !_streamActive) return;
@@ -384,10 +404,31 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   }
 
   // ── Conversión CameraImage → img.Image ───────────────────────────────
-  img.Image? _convertCameraImage(CameraImage frame) {
+  //
+  // La conversión YUV420→RGB (el bottleneck de FPS confirmado en el audit:
+  // un loop pixel-a-pixel en Dart) se movió a un isolate en background con
+  // `Isolate.run`, para no bloquear el hilo principal (UI + gestos + stream
+  // callback siguiente) mientras se procesa el frame.
+  //
+  // Trade-offs vs. la versión anterior (buffer reutilizado en el hilo
+  // principal):
+  //  - Ya no se puede reutilizar `_rgbBuffer` entre frames: cada llamada a
+  //    Isolate.run copia los datos de entrada al nuevo isolate y copia el
+  //    resultado de vuelta, así que se asigna un buffer RGB nuevo por frame
+  //    (~1 MB para una cámara 640x480). Esto aumenta la presión sobre el GC
+  //    comparado con el buffer reutilizado anterior.
+  //  - `Isolate.run` crea y destruye un isolate por llamada (~1-5 ms de
+  //    overhead típico en dispositivos móviles, más el costo de copiar los
+  //    planes Y/U/V, que también se copian explícitamente antes de cruzar
+  //    el límite del isolate). Para frames de cámara (cientos de KB) esto
+  //    es aceptable y muy inferior al tiempo que el loop bloqueaba la UI.
+  //  - BGRA8888 (usado en iOS) no pasa por el loop pixel-a-pixel — ya usa
+  //    `img.Image.fromBytes` directo sobre los bytes nativos — así que se
+  //    mantiene síncrono, no necesita isolate.
+  Future<img.Image?> _convertCameraImageAsync(CameraImage frame) async {
     try {
       if (frame.format.group == ImageFormatGroup.yuv420) {
-        return _convertYUV420(frame);
+        return await _convertYUV420Isolate(frame);
       } else if (frame.format.group == ImageFormatGroup.bgra8888) {
         return _convertBGRA8888(frame);
       }
@@ -398,41 +439,28 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     }
   }
 
-  /// Buffer RGB reutilizado entre frames (mismo tamaño de cámara) para
-  /// evitar asignar ~1 MB por frame y reducir la presión sobre el GC en
-  /// equipos con poca RAM.
-  Uint8List? _rgbBuffer;
-
-  img.Image _convertYUV420(CameraImage frame) {
-    final w = frame.width;
-    final h = frame.height;
+  Future<img.Image> _convertYUV420Isolate(CameraImage frame) async {
     final yPlane = frame.planes[0];
     final uPlane = frame.planes[1];
     final vPlane = frame.planes[2];
-    final yStride = yPlane.bytesPerRow;
-    final uvStride = uPlane.bytesPerRow;
-    final uvPixel = uPlane.bytesPerPixel ?? 1;
 
-    final neededSize = w * h * 3;
-    var rgb = _rgbBuffer;
-    if (rgb == null || rgb.length != neededSize) {
-      rgb = Uint8List(neededSize);
-      _rgbBuffer = rgb;
-    }
-    int idx = 0;
-    for (int y = 0; y < h; y++) {
-      for (int x = 0; x < w; x++) {
-        final yy = yPlane.bytes[y * yStride + x] - 16;
-        final uvIdx = (y >> 1) * uvStride + (x >> 1) * uvPixel;
-        final uu = uPlane.bytes[uvIdx] - 128;
-        final vv = vPlane.bytes[uvIdx] - 128;
-        rgb[idx++] = ((298 * yy + 409 * vv + 128) >> 8).clamp(0, 255);
-        rgb[idx++] = ((298 * yy - 100 * uu - 208 * vv + 128) >> 8).clamp(0, 255);
-        rgb[idx++] = ((298 * yy + 516 * uu + 128) >> 8).clamp(0, 255);
-      }
-    }
+    final args = _YuvConversionArgs(
+      width: frame.width,
+      height: frame.height,
+      yStride: yPlane.bytesPerRow,
+      uvStride: uPlane.bytesPerRow,
+      uvPixelStride: uPlane.bytesPerPixel ?? 1,
+      // Copias explícitas: los bytes de los planes viven en memoria nativa
+      // gestionada por el plugin `camera` y no son seguros de compartir
+      // directamente entre isolates.
+      yBytes: Uint8List.fromList(yPlane.bytes),
+      uBytes: Uint8List.fromList(uPlane.bytes),
+      vBytes: Uint8List.fromList(vPlane.bytes),
+    );
+
+    final rgb = await Isolate.run(() => _yuv420ToRgb(args));
     return img.Image.fromBytes(
-      width: w, height: h, bytes: rgb.buffer, numChannels: 3,
+      width: args.width, height: args.height, bytes: rgb.buffer, numChannels: 3,
     );
   }
 
@@ -760,6 +788,8 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
         child: Row(
           children: [
             IconButton(
+              tooltip: 'Volver',
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
               icon: const Icon(Icons.arrow_back, color: Colors.white),
               onPressed: () => Navigator.of(context).maybePop(),
             ),
@@ -847,28 +877,32 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
                 label: 'Voz',
                 onTap: _handleVoiceTap,
               ),
-              GestureDetector(
-                onTap: _streamActive ? _stopDetection : _startDetection,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width: 72,
-                  height: 72,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: _streamActive ? Colors.red : Colors.white,
-                    boxShadow: [
-                      BoxShadow(
-                        color: (_streamActive ? Colors.red : Colors.white)
-                            .withOpacity(0.4),
-                        blurRadius: 20,
-                        spreadRadius: 4,
-                      ),
-                    ],
-                  ),
-                  child: Icon(
-                    _streamActive ? Icons.stop_rounded : Icons.play_arrow_rounded,
-                    color: _streamActive ? Colors.white : Colors.black,
-                    size: 36,
+              Semantics(
+                button: true,
+                label: _streamActive ? 'Detener detección' : 'Iniciar detección',
+                child: GestureDetector(
+                  onTap: _streamActive ? _stopDetection : _startDetection,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _streamActive ? Colors.red : Colors.white,
+                      boxShadow: [
+                        BoxShadow(
+                          color: (_streamActive ? Colors.red : Colors.white)
+                              .withOpacity(0.4),
+                          blurRadius: 20,
+                          spreadRadius: 4,
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      _streamActive ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                      color: _streamActive ? Colors.white : Colors.black,
+                      size: 36,
+                    ),
                   ),
                 ),
               ),
@@ -922,33 +956,41 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   }
 
   Widget _buildDetectionBadge(Detection d) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.2)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.visibility, color: Colors.white70, size: 18),
-          const SizedBox(width: 10),
-          Text(
-            d.label.toUpperCase(),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 2,
+    final pct = (d.confidence * 100).toStringAsFixed(0);
+    return Semantics(
+      label: 'Detectado: ${d.label}, confianza $pct%',
+      liveRegion: true,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withOpacity(0.2)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.visibility, color: Colors.white70, size: 18),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(
+                d.label.toUpperCase(),
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 2,
+                ),
+              ),
             ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            '${(d.confidence * 100).toStringAsFixed(0)}%',
-            style: const TextStyle(color: Colors.white54, fontSize: 14),
-          ),
-        ],
+            const SizedBox(width: 10),
+            Text(
+              '$pct%',
+              style: const TextStyle(color: Colors.white54, fontSize: 14),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -971,30 +1013,36 @@ class _IconButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final active = onTap != null;
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 50,
-            height: 50,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: active
-                  ? Colors.white.withOpacity(0.15)
-                  : Colors.white.withOpacity(0.05),
+    return Semantics(
+      button: true,
+      label: label,
+      enabled: active,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 50,
+              height: 50,
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: active
+                    ? Colors.white.withOpacity(0.15)
+                    : Colors.white.withOpacity(0.05),
+              ),
+              child: Icon(icon,
+                  color: active ? Colors.white : Colors.white30, size: 22),
             ),
-            child: Icon(icon,
-                color: active ? Colors.white : Colors.white30, size: 22),
-          ),
-          const SizedBox(height: 4),
-          Text(label,
-              style: TextStyle(
-                color: active ? Colors.white60 : Colors.white24,
-                fontSize: 10,
-              )),
-        ],
+            const SizedBox(height: 4),
+            Text(label,
+                style: TextStyle(
+                  color: active ? Colors.white60 : Colors.white24,
+                  fontSize: 10,
+                )),
+          ],
+        ),
       ),
     );
   }
@@ -1051,4 +1099,49 @@ class _DetectionPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _DetectionPainter old) =>
       old.detections != detections;
+}
+
+/// Datos de entrada para la conversión YUV420→RGB en isolate. Todos los
+/// campos son tipos "sendable" (primitivos + Uint8List) para poder cruzar
+/// el límite del isolate sin copias implícitas costosas.
+class _YuvConversionArgs {
+  final int width;
+  final int height;
+  final int yStride;
+  final int uvStride;
+  final int uvPixelStride;
+  final Uint8List yBytes;
+  final Uint8List uBytes;
+  final Uint8List vBytes;
+
+  _YuvConversionArgs({
+    required this.width,
+    required this.height,
+    required this.yStride,
+    required this.uvStride,
+    required this.uvPixelStride,
+    required this.yBytes,
+    required this.uBytes,
+    required this.vBytes,
+  });
+}
+
+/// Función top-level ejecutada dentro del isolate de background vía
+/// `Isolate.run`. Misma lógica de conversión YUV420 (BT.601) que antes,
+/// solo que ahora corre fuera del hilo principal.
+Uint8List _yuv420ToRgb(_YuvConversionArgs a) {
+  final rgb = Uint8List(a.width * a.height * 3);
+  int idx = 0;
+  for (int y = 0; y < a.height; y++) {
+    for (int x = 0; x < a.width; x++) {
+      final yy = a.yBytes[y * a.yStride + x] - 16;
+      final uvIdx = (y >> 1) * a.uvStride + (x >> 1) * a.uvPixelStride;
+      final uu = a.uBytes[uvIdx] - 128;
+      final vv = a.vBytes[uvIdx] - 128;
+      rgb[idx++] = ((298 * yy + 409 * vv + 128) >> 8).clamp(0, 255);
+      rgb[idx++] = ((298 * yy - 100 * uu - 208 * vv + 128) >> 8).clamp(0, 255);
+      rgb[idx++] = ((298 * yy + 516 * uu + 128) >> 8).clamp(0, 255);
+    }
+  }
+  return rgb;
 }

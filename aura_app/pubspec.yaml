@@ -64,5 +64,7 @@ flutter:
 
   assets:
     - assets/yolov8n_float32.tflite
+    - assets/yolov8n_int8.tflite
     - assets/mobilenetv2_embeddings.tflite
+    - assets/mobilenetv2_embeddings_int8.tflite
     - assets/vosk-model-small-es-0.42.zip

@@ -8,8 +8,10 @@ import 'package:image/image.dart' as img;
 import '../models/saved_object.dart';
 import '../services/app_settings.dart';
 import '../services/backend_service.dart';
+import '../services/detection_crop.dart';
 import '../services/embedding_service.dart';
 import '../services/google_auth_service.dart';
+import '../services/object_detector.dart';
 import '../services/saved_objects_repository.dart';
 import '../services/voice_input_service.dart';
 import '../services/tts.dart';
@@ -40,7 +42,10 @@ class SaveObjectScreen extends StatefulWidget {
 class _SaveObjectScreenState extends State<SaveObjectScreen> {
   final AudioFeedback _audio = AudioFeedback();
   final SavedObjectsRepository _repo = SavedObjectsRepository();
-  final EmbeddingService _embeddings = EmbeddingService();
+  final EmbeddingService _embeddings =
+      EmbeddingService(useInt8: AppSettings.instance.useEmbeddingInt8);
+  final ObjectDetector _detector =
+      ObjectDetector(useInt8: AppSettings.instance.useYoloInt8);
   late final VoiceInputService _voice = VoiceInputService(_audio);
   final GoogleAuthService _auth = GoogleAuthService();
   final BackendService _backend = BackendService();
@@ -85,6 +90,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     if (!kIsWeb) {
       await _initCamera();
       await _embeddings.loadModel();
+      await _detector.loadModel();
       if (mounted) setState(() => _modelLoaded = _embeddings.isLoaded);
     }
   }
@@ -120,6 +126,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     _voice.stop();
     _camera?.dispose();
     _embeddings.dispose();
+    _detector.dispose();
     _audio.stop();
     _audio.dispose();
     _nameController.dispose();
@@ -256,7 +263,24 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       final bytes = await xfile.readAsBytes();
       final decoded = img.decodeImage(bytes);
       if (decoded == null) return const [];
-      return await _embeddings.extractEmbedding(decoded);
+
+      // Recortar al bounding box de YOLO (con padding) antes de extraer el
+      // embedding, en vez de pasar el frame completo: el embedding debe
+      // representar el objeto, no la escena que lo rodea.
+      var toEmbed = decoded;
+      if (_detector.isLoaded) {
+        final detections = await _detector.detect(decoded);
+        final best = highestConfidence(detections);
+        if (best != null) {
+          toEmbed = cropToDetection(decoded, best);
+        } else {
+          debugPrint('[save_object] YOLO no detectó nada; usando imagen completa como fallback.');
+        }
+      } else {
+        debugPrint('[save_object] Detector YOLO no cargado; usando imagen completa como fallback.');
+      }
+
+      return await _embeddings.extractEmbedding(toEmbed);
     } catch (e) {
       debugPrint('Error capturando foto: $e');
       return const [];
@@ -272,6 +296,8 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         backgroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(
+          tooltip: 'Volver',
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           icon: const Icon(Icons.arrow_back, color: Colors.black),
           onPressed: () => Navigator.maybePop(context),
         ),
@@ -402,28 +428,32 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
           ),
         ),
         const SizedBox(width: 12),
-        GestureDetector(
-          onTap: _handleMicTap,
-          child: Container(
-            width: 60,
-            height: 60,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _isListeningMic ? _kAuraRed : _kAuraRed.withOpacity(0.1),
-              boxShadow: _isListeningMic
-                  ? [
-                      BoxShadow(
-                        color: _kAuraRed.withOpacity(0.35),
-                        blurRadius: 18,
-                        spreadRadius: 3,
-                      ),
-                    ]
-                  : [],
-            ),
-            child: Icon(
-              _isListeningMic ? Icons.mic : Icons.mic_none,
-              color: _isListeningMic ? Colors.white : _kAuraRed,
-              size: 28,
+        Semantics(
+          button: true,
+          label: _isListeningMic ? 'Escuchando' : 'Dictar nombre por voz',
+          child: GestureDetector(
+            onTap: _handleMicTap,
+            child: Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _isListeningMic ? _kAuraRed : _kAuraRed.withOpacity(0.1),
+                boxShadow: _isListeningMic
+                    ? [
+                        BoxShadow(
+                          color: _kAuraRed.withOpacity(0.35),
+                          blurRadius: 18,
+                          spreadRadius: 3,
+                        ),
+                      ]
+                    : [],
+              ),
+              child: Icon(
+                _isListeningMic ? Icons.mic : Icons.mic_none,
+                color: _isListeningMic ? Colors.white : _kAuraRed,
+                size: 28,
+              ),
             ),
           ),
         ),

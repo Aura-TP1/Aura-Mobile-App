@@ -8,9 +8,14 @@ import 'package:image/image.dart' as img;
 import 'package:vibration/vibration.dart';
 
 import '../models/saved_object.dart';
+import '../services/detection_crop.dart';
 import '../services/embedding_service.dart';
 import '../services/embedding_service_common.dart';
+import '../services/object_detector.dart';
 import '../services/tts.dart';
+import '../services/app_settings.dart';
+import '../services/metrics_logger.dart';
+import '../services/saved_objects_repository.dart';
 
 const Color _kAuraRed = Color(0xFFE53935);
 const Color _kAuraGreen = Color(0xFF2E7D32);
@@ -40,8 +45,12 @@ class RealSearchScreen extends StatefulWidget {
 
 class _RealSearchScreenState extends State<RealSearchScreen>
     with TickerProviderStateMixin {
-  final EmbeddingService _embeddings = EmbeddingService();
+  final EmbeddingService _embeddings =
+      EmbeddingService(useInt8: AppSettings.instance.useEmbeddingInt8);
+  final ObjectDetector _detector =
+      ObjectDetector(useInt8: AppSettings.instance.useYoloInt8);
   final AudioFeedback _audio = AudioFeedback();
+  final SavedObjectsRepository _savedObjectsRepo = SavedObjectsRepository();
 
   CameraController? _camera;
   bool _cameraReady = false;
@@ -56,7 +65,9 @@ class _RealSearchScreenState extends State<RealSearchScreen>
   late final AnimationController _sweepController;
   late final AnimationController _foundController;
 
-  static const Duration _frameInterval = Duration(milliseconds: 300);
+  /// Intervalo entre cuadros analizados. Ajustable en Ajustes (WCAG 2.2.1);
+  /// 300 ms por defecto.
+  Duration get _frameInterval => AppSettings.instance.scanInterval;
 
   /// Umbral base de match confirmado. NO se modifica (requisito).
   static const double _threshold = 0.75;
@@ -133,7 +144,7 @@ class _RealSearchScreenState extends State<RealSearchScreen>
   }
 
   Future<void> _loadModel() async {
-    await _embeddings.loadModel();
+    await Future.wait([_embeddings.loadModel(), _detector.loadModel()]);
     if (mounted) setState(() => _modelLoaded = _embeddings.isLoaded);
   }
 
@@ -158,6 +169,11 @@ class _RealSearchScreenState extends State<RealSearchScreen>
       }
 
       try {
+        // Solo para métricas: mide la latencia de este ciclo de escaneo
+        // (captura + embedding + comparación) de forma aditiva, sin alterar
+        // el flujo ni el timing real del loop.
+        final metricsStopwatch = Stopwatch()..start();
+
         final xfile = await c.takePicture();
         final bytes = await xfile.readAsBytes();
         final image = img.decodeImage(bytes);
@@ -166,7 +182,24 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           continue;
         }
 
-        final frameEmb = await _embeddings.extractEmbedding(image);
+        // Recortar al bounding box de YOLO (con padding) antes de extraer
+        // el embedding del frame, igual que al guardar el objeto: comparar
+        // "objeto recortado vs. objeto recortado" es lo que hace que la
+        // similitud coseno sea representativa (ver Tabla II).
+        var toEmbed = image;
+        if (_detector.isLoaded) {
+          final detections = await _detector.detect(image);
+          final best = highestConfidence(detections);
+          if (best != null) {
+            toEmbed = cropToDetection(image, best);
+          } else {
+            debugPrint('[real_search] YOLO no detectó nada en este frame; usando imagen completa como fallback.');
+          }
+        } else {
+          debugPrint('[real_search] Detector YOLO no cargado; usando imagen completa como fallback.');
+        }
+
+        final frameEmb = await _embeddings.extractEmbedding(toEmbed);
         if (frameEmb.isEmpty) {
           await Future.delayed(_frameInterval);
           continue;
@@ -193,6 +226,18 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         if (!mounted || _disposed) return;
         setState(() => _currentSimilarity = bestSim);
 
+        final decision = bestSim >= _threshold
+            ? 'found'
+            : (bestSim >= _kMaybeThreshold ? 'maybe' : 'none');
+
+        // Solo para métricas: similitud contra TODOS los objetos guardados,
+        // para detectar falsos positivos (otro objeto con mayor similitud
+        // que el objetivo). No afecta la decisión de match, que sigue
+        // basándose solo en widget.savedObject. Fire-and-forget: no se
+        // espera el resultado para no retrasar el siguiente frame.
+        // ignore: discarded_futures
+        _logSearchMetrics(frameEmb: frameEmb, bestSim: bestSim, decision: decision, stopwatch: metricsStopwatch);
+
         if (bestSim >= _threshold) {
           await _onFound();
           return;
@@ -204,6 +249,48 @@ class _RealSearchScreenState extends State<RealSearchScreen>
       }
 
       await Future.delayed(_frameInterval);
+    }
+  }
+
+  /// Solo para métricas (instrumentación pura, no afecta el flujo de
+  /// búsqueda real). Calcula la similitud del frame actual contra TODOS los
+  /// objetos guardados (para detectar falsos positivos por confusión con
+  /// otro objeto) y registra el intento de búsqueda en
+  /// `search_metrics.jsonl` vía [MetricsLogger]. Nunca lanza excepciones.
+  Future<void> _logSearchMetrics({
+    required List<double> frameEmb,
+    required double bestSim,
+    required String decision,
+    required Stopwatch stopwatch,
+  }) async {
+    try {
+      final allSavedObjects = await _savedObjectsRepo.getAll();
+      final Map<String, double> allSims = {};
+      for (final obj in allSavedObjects) {
+        double s = 0.0;
+        for (final e in obj.embeddings) {
+          final v = cosineSimilarity(e.embedding, frameEmb);
+          if (v > s) s = v;
+        }
+        if (s == 0.0 && obj.embedding.isNotEmpty) {
+          s = cosineSimilarity(obj.embedding, frameEmb);
+        }
+        allSims[obj.id.toString()] = s;
+      }
+
+      stopwatch.stop();
+
+      await MetricsLogger.instance.logSearchAttempt(
+        targetObjectId: widget.savedObject.id.toString(),
+        targetObjectName: widget.savedObject.name,
+        targetSimilarity: bestSim,
+        decision: decision,
+        latencyMs: stopwatch.elapsedMilliseconds,
+        storedObjectCount: allSavedObjects.length,
+        allObjectSimilarities: allSims,
+      );
+    } catch (e) {
+      debugPrint('RealSearchScreen metrics logging error: $e');
     }
   }
 
@@ -262,6 +349,7 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     _foundController.dispose();
     _camera?.dispose();
     _embeddings.dispose();
+    _detector.dispose();
     _audio.stop();
     _audio.dispose();
     super.dispose();
@@ -288,6 +376,8 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           backgroundColor: Colors.transparent,
           elevation: 0,
           leading: IconButton(
+            tooltip: 'Volver',
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
             icon: const Icon(Icons.arrow_back, color: Colors.white),
             onPressed: _handleBack,
           ),
@@ -400,34 +490,60 @@ class _RealSearchScreenState extends State<RealSearchScreen>
 
   Widget _buildSimilarityBar() {
     final pct = (_currentSimilarity / _threshold).clamp(0.0, 1.0);
-    final color = pct > 0.85 ? _kAuraGreen : _kAuraRed;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              'Similitud con el objeto',
-              style: TextStyle(color: Colors.white60, fontSize: 12),
-            ),
-            Text(
-              '${(_currentSimilarity * 100).toStringAsFixed(0)}%',
-              style: const TextStyle(color: Colors.white60, fontSize: 12),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: pct,
-            minHeight: 7,
-            backgroundColor: Colors.white12,
-            valueColor: AlwaysStoppedAnimation<Color>(color),
+    final isClose = pct > 0.85;
+    final color = isClose ? _kAuraGreen : _kAuraRed;
+    final pctInt = (_currentSimilarity * 100).toStringAsFixed(0);
+    // No dependemos solo del color: agregamos texto/ícono de estado
+    // (WCAG 1.4.1) además de la etiqueta accesible (WCAG 4.1.2).
+    final stateLabel = isClose ? 'Cerca' : 'Buscando';
+    return Semantics(
+      label: 'Similitud: $pctInt%, $stateLabel',
+      value: '$pctInt%',
+      liveRegion: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Flexible(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isClose ? Icons.trending_up : Icons.search,
+                      color: Colors.white60,
+                      size: 14,
+                    ),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        'Similitud con el objeto ($stateLabel)',
+                        style: const TextStyle(color: Colors.white60, fontSize: 12),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                '$pctInt%',
+                style: const TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+            ],
           ),
-        ),
-      ],
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: pct,
+              minHeight: 7,
+              backgroundColor: Colors.white12,
+              valueColor: AlwaysStoppedAnimation<Color>(color),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

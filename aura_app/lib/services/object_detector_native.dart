@@ -17,6 +17,18 @@ class ObjectDetector {
   static const double _confThreshold = 0.4;
   static const double _iouThreshold = 0.45;
 
+  /// Si es `true`, carga `assets/yolov8n_int8.tflite` (pesos cuantizados a
+  /// INT8, ~3.3MB) en vez del float32 por defecto (~12.7MB). A diferencia
+  /// del embedding INT8 de MobileNetV2, este modelo mantiene entrada Y
+  /// salida en float32 (verificado con el intérprete: input [1,320,320,3]
+  /// float32, output [1,84,2100] float32, igual que el modelo float32) —
+  /// es cuantización "full-integer con I/O float", así que NO requiere
+  /// dequantización: el mismo pipeline Float32List/_parseOutput de abajo
+  /// sirve sin cambios para ambos modelos.
+  final bool useInt8;
+
+  ObjectDetector({this.useInt8 = false});
+
   Interpreter? _interpreter;
   IsolateInterpreter? _isolateInterpreter;
   bool _isModelLoaded = false;
@@ -32,10 +44,12 @@ class ObjectDetector {
   bool get isLoaded => _isModelLoaded;
 
   Future<void> loadModel() async {
+    final assetPath =
+        useInt8 ? 'assets/yolov8n_int8.tflite' : 'assets/yolov8n_float32.tflite';
     try {
-      debugPrint('Cargando YOLOv8n...');
+      debugPrint('Cargando YOLOv8n ($assetPath)...');
       _interpreter = await Interpreter.fromAsset(
-        'assets/yolov8n_float32.tflite',
+        assetPath,
         // 2 hilos: en equipos de gama baja con 4 GB de RAM (típicamente
         // 4-8 núcleos compartidos con la UI), usar más hilos compite con
         // el hilo principal y no acelera la inferencia de forma notable.

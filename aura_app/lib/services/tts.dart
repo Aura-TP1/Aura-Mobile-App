@@ -21,8 +21,9 @@ class AudioFeedback {
   /// [announceScene]; [speak] sí puede interrumpir (instrucciones deliberadas).
   bool _isSpeaking = false;
 
-  /// Tiempo mínimo entre anuncios (spec: ≥ 3 s).
-  static const Duration repeatCooldown = Duration(seconds: 3);
+  /// Tiempo mínimo entre anuncios (spec: ≥ 3 s por defecto, ajustable en
+  /// Ajustes > Tiempos y accesibilidad — WCAG 2.2.1).
+  Duration get repeatCooldown => AppSettings.instance.ttsRepeatCooldown;
 
   Future<void> init() async {
     // Idioma: es-PE (aceptado por el spec junto con es-MX). Se mantiene el
