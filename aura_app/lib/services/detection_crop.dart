@@ -2,6 +2,33 @@ import 'package:image/image.dart' as img;
 
 import 'object_detector.dart' show Detection;
 
+/// Umbral de confianza usado SOLO para elegir un recorte antes de extraer
+/// el embedding — deliberadamente mucho más bajo que el umbral de
+/// detección en vivo (0.4 en `ObjectDetector._confThreshold`). El objetivo
+/// aquí no es clasificar correctamente el objeto, solo localizarlo
+/// espacialmente: YOLOv8n es COCO-pretrained (80 clases fijas), y varios
+/// objetos de prueba (llaves, pastillas, vitaminas, lentes, billetera) no
+/// tienen clase COCO análoga, así que sus activaciones de clase se quedan
+/// muy por debajo de 0.4 en la mayoría de los frames aunque el objeto esté
+/// perfectamente ubicado en el cuadro. Un umbral bajo deja pasar esas cajas
+/// de baja confianza igual, ya que solo nos interesa su posición.
+const double kCropConfThreshold = 0.15;
+
+/// Recorte central de respaldo cuando ni siquiera [kCropConfThreshold]
+/// encuentra una caja: recorta el [fraction] central del ancho/alto de
+/// [image] (centrado), sin depender de que YOLO reconozca la clase del
+/// objeto. Sigue reduciendo el fondo para objetos razonablemente centrados
+/// en el encuadre, que es como se pide capturar/buscar objetos en la app.
+img.Image centerCrop(img.Image image, {double fraction = 0.65}) {
+  final w = image.width;
+  final h = image.height;
+  final cropW = (w * fraction).round().clamp(1, w);
+  final cropH = (h * fraction).round().clamp(1, h);
+  final x = ((w - cropW) / 2).round();
+  final y = ((h - cropH) / 2).round();
+  return img.copyCrop(image, x: x, y: y, width: cropW, height: cropH);
+}
+
 /// Recorta [image] alrededor del [Detection] de mayor confianza detectado
 /// por YOLO, con un margen de padding alrededor del bounding box para no
 /// cortar el objeto demasiado ajustado (p. ej. si YOLO subestima ligeramente

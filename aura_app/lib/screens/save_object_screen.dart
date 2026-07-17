@@ -11,6 +11,7 @@ import '../services/backend_service.dart';
 import '../services/detection_crop.dart';
 import '../services/embedding_service.dart';
 import '../services/google_auth_service.dart';
+import '../services/metrics_logger.dart';
 import '../services/object_detector.dart';
 import '../services/saved_objects_repository.dart';
 import '../services/voice_input_service.dart';
@@ -264,21 +265,46 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       final decoded = img.decodeImage(bytes);
       if (decoded == null) return const [];
 
-      // Recortar al bounding box de YOLO (con padding) antes de extraer el
-      // embedding, en vez de pasar el frame completo: el embedding debe
-      // representar el objeto, no la escena que lo rodea.
+      // Recortar antes de extraer el embedding, en vez de pasar el frame
+      // completo: el embedding debe representar el objeto, no la escena que
+      // lo rodea. Usa kCropConfThreshold (bajo, solo localización) — varios
+      // objetos de prueba (llaves, pastillas, lentes) no son clases COCO y
+      // casi nunca cruzan el umbral de detección en vivo (0.4). Si ni con
+      // el umbral bajo hay nada, recorte central en vez de imagen entera.
       var toEmbed = decoded;
+      String cropMethod;
+      int? cropClassId;
+      String? cropLabel;
+      double? cropConfidence;
       if (_detector.isLoaded) {
-        final detections = await _detector.detect(decoded);
+        final detections =
+            await _detector.detect(decoded, confThreshold: kCropConfThreshold);
         final best = highestConfidence(detections);
         if (best != null) {
           toEmbed = cropToDetection(decoded, best);
+          cropMethod = 'yolo_detection';
+          cropClassId = cocoLabels.indexOf(best.label);
+          cropLabel = best.label;
+          cropConfidence = best.confidence;
         } else {
-          debugPrint('[save_object] YOLO no detectó nada; usando imagen completa como fallback.');
+          toEmbed = centerCrop(decoded);
+          cropMethod = 'center_crop_fallback';
+          debugPrint('[save_object] Sin detección ≥$kCropConfThreshold; usando center-crop como fallback.');
         }
       } else {
+        cropMethod = 'full_frame_no_model';
         debugPrint('[save_object] Detector YOLO no cargado; usando imagen completa como fallback.');
       }
+
+      // ignore: discarded_futures
+      MetricsLogger.instance.logCropSelection(
+        screen: 'save_object',
+        objectLabel: _nameController.text.trim(),
+        cropMethod: cropMethod,
+        detectionClassId: cropClassId,
+        detectionLabel: cropLabel,
+        detectionConfidence: cropConfidence,
+      );
 
       return await _embeddings.extractEmbedding(toEmbed);
     } catch (e) {
