@@ -182,20 +182,37 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           continue;
         }
 
-        // Recortar al bounding box de YOLO (con padding) antes de extraer
-        // el embedding del frame, igual que al guardar el objeto: comparar
-        // "objeto recortado vs. objeto recortado" es lo que hace que la
-        // similitud coseno sea representativa (ver Tabla II).
+        // Recortar antes de extraer el embedding del frame, igual que al
+        // guardar el objeto: comparar "objeto recortado vs. objeto
+        // recortado" es lo que hace que la similitud coseno sea
+        // representativa (ver Tabla II). Usa kCropConfThreshold (bajo,
+        // solo localización) en vez del umbral de detección en vivo (0.4):
+        // varios objetos de prueba (llaves, pastillas, lentes) no son
+        // clases COCO y casi nunca cruzan 0.4, así que con ese umbral el
+        // recorte casi siempre caía al frame completo. Si ni con el umbral
+        // bajo hay nada, usa un recorte central en vez de la imagen entera.
         var toEmbed = image;
+        String cropMethod;
+        int? cropClassId;
+        String? cropLabel;
+        double? cropConfidence;
         if (_detector.isLoaded) {
-          final detections = await _detector.detect(image);
+          final detections =
+              await _detector.detect(image, confThreshold: kCropConfThreshold);
           final best = highestConfidence(detections);
           if (best != null) {
             toEmbed = cropToDetection(image, best);
+            cropMethod = 'yolo_detection';
+            cropClassId = cocoLabels.indexOf(best.label);
+            cropLabel = best.label;
+            cropConfidence = best.confidence;
           } else {
-            debugPrint('[real_search] YOLO no detectó nada en este frame; usando imagen completa como fallback.');
+            toEmbed = centerCrop(image);
+            cropMethod = 'center_crop_fallback';
+            debugPrint('[real_search] Sin detección ≥$kCropConfThreshold; usando center-crop como fallback.');
           }
         } else {
+          cropMethod = 'full_frame_no_model';
           debugPrint('[real_search] Detector YOLO no cargado; usando imagen completa como fallback.');
         }
 
@@ -236,7 +253,16 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         // basándose solo en widget.savedObject. Fire-and-forget: no se
         // espera el resultado para no retrasar el siguiente frame.
         // ignore: discarded_futures
-        _logSearchMetrics(frameEmb: frameEmb, bestSim: bestSim, decision: decision, stopwatch: metricsStopwatch);
+        _logSearchMetrics(
+          frameEmb: frameEmb,
+          bestSim: bestSim,
+          decision: decision,
+          stopwatch: metricsStopwatch,
+          cropMethod: cropMethod,
+          cropClassId: cropClassId,
+          cropLabel: cropLabel,
+          cropConfidence: cropConfidence,
+        );
 
         if (bestSim >= _threshold) {
           await _onFound();
@@ -262,6 +288,10 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     required double bestSim,
     required String decision,
     required Stopwatch stopwatch,
+    required String cropMethod,
+    int? cropClassId,
+    String? cropLabel,
+    double? cropConfidence,
   }) async {
     try {
       final allSavedObjects = await _savedObjectsRepo.getAll();
@@ -288,6 +318,10 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         latencyMs: stopwatch.elapsedMilliseconds,
         storedObjectCount: allSavedObjects.length,
         allObjectSimilarities: allSims,
+        cropMethod: cropMethod,
+        cropDetectionClassId: cropClassId,
+        cropDetectionLabel: cropLabel,
+        cropDetectionConfidence: cropConfidence,
       );
     } catch (e) {
       debugPrint('RealSearchScreen metrics logging error: $e');

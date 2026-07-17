@@ -75,7 +75,12 @@ class ObjectDetector {
     }
   }
 
-  Future<List<Detection>> detect(img.Image image) async {
+  /// [confThreshold] permite sobreescribir el umbral de confianza por
+  /// llamada (p.ej. un umbral más bajo solo para elegir un recorte antes de
+  /// extraer un embedding, sin afectar la detección en vivo). Si se omite,
+  /// usa el umbral por defecto ([_confThreshold] = 0.4), igual que antes —
+  /// las llamadas existentes sin este parámetro no cambian de comportamiento.
+  Future<List<Detection>> detect(img.Image image, {double? confThreshold}) async {
     if (!_isModelLoaded || _interpreter == null) return const [];
 
     final resized = img.copyResize(image, width: inputSize, height: inputSize);
@@ -96,13 +101,13 @@ class ObjectDetector {
       _interpreter!.run(_inputBuffer.buffer, _outputBuffer.buffer);
     }
 
-    return _parseOutput(_outputBuffer);
+    return _parseOutput(_outputBuffer, confThreshold ?? _confThreshold);
   }
 
   // out es un Float32List plano de tamaño [84 * 2100]: out[feature * 2100 + box].
   // Filas 0-3: cx, cy, w, h en píxeles del espacio 320×320.
   // Filas 4-83: score de cada clase COCO.
-  List<Detection> _parseOutput(Float32List out) {
+  List<Detection> _parseOutput(Float32List out, double confThreshold) {
     final detections = <Detection>[];
 
     for (int i = 0; i < _numBoxes; i++) {
@@ -116,7 +121,7 @@ class ObjectDetector {
         }
       }
 
-      if (maxConf < _confThreshold) continue;
+      if (maxConf < confThreshold) continue;
 
       // Coordenadas en píxeles del espacio del modelo → normalizar a [0, 1].
       final cx = out[0 * _numBoxes + i] / inputSize;

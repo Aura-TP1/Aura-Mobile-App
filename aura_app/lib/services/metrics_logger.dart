@@ -27,6 +27,7 @@ class MetricsLogger {
 
   static const String _detectionFileName = 'detection_metrics.jsonl';
   static const String _searchFileName = 'search_metrics.jsonl';
+  static const String _cropFileName = 'crop_metrics.jsonl';
 
   Directory? _metricsDir;
 
@@ -96,6 +97,15 @@ class MetricsLogger {
     required int latencyMs,
     required int storedObjectCount,
     Map<String, double>? allObjectSimilarities,
+    // Diagnóstico del recorte usado para este intento de búsqueda (ver
+    // detection_crop.dart): permite analizar, por objeto, si YOLO logró
+    // localizar el objeto (aunque sea con baja confianza) o si se usó el
+    // recorte central de respaldo — clave para confirmar/refutar si el
+    // recorte por bbox realmente ayuda en objetos que no son clases COCO.
+    String? cropMethod, // 'yolo_detection' | 'center_crop_fallback' | 'full_frame_no_model'
+    int? cropDetectionClassId,
+    String? cropDetectionLabel,
+    double? cropDetectionConfidence,
   }) async {
     try {
       String? topOtherObjectId;
@@ -135,10 +145,43 @@ class MetricsLogger {
         'topOtherObjectSimilarity': topOtherObjectSimilarity,
         'wouldConfuseWithOther': wouldConfuseWithOther,
         'matchCorrect': matchCorrect,
+        'cropMethod': cropMethod,
+        'cropDetectionClassId': cropDetectionClassId,
+        'cropDetectionLabel': cropDetectionLabel,
+        'cropDetectionConfidence': cropDetectionConfidence,
       };
       await _appendLine(_searchFileName, entry);
     } catch (e) {
       debugPrint('MetricsLogger.logSearchAttempt error: $e');
+    }
+  }
+
+  /// Diagnóstico del recorte para los flujos de guardado (save_object /
+  /// multi_angle_capture), que no tienen un log de intento existente para
+  /// extender como sí lo tiene la búsqueda. Mismo propósito que los campos
+  /// `crop*` de [logSearchAttempt]: saber si YOLO localizó el objeto (con
+  /// qué confianza/clase) o si se usó el recorte central de respaldo.
+  Future<void> logCropSelection({
+    required String screen,
+    required String objectLabel,
+    required String cropMethod,
+    int? detectionClassId,
+    String? detectionLabel,
+    double? detectionConfidence,
+  }) async {
+    try {
+      final entry = <String, dynamic>{
+        'timestamp': DateTime.now().toIso8601String(),
+        'screen': screen,
+        'objectLabel': objectLabel,
+        'cropMethod': cropMethod,
+        'detectionClassId': detectionClassId,
+        'detectionLabel': detectionLabel,
+        'detectionConfidence': detectionConfidence,
+      };
+      await _appendLine(_cropFileName, entry);
+    } catch (e) {
+      debugPrint('MetricsLogger.logCropSelection error: $e');
     }
   }
 

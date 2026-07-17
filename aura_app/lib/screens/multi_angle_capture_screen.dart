@@ -7,6 +7,7 @@ import '../models/saved_object.dart';
 import '../services/app_settings.dart';
 import '../services/detection_crop.dart';
 import '../services/embedding_service.dart';
+import '../services/metrics_logger.dart';
 import '../services/object_detector.dart';
 import '../services/stt_service.dart';
 import '../services/tts.dart';
@@ -133,21 +134,46 @@ class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
 
       setState(() => _isProcessing = true);
 
-      // Recortar al bounding box de YOLO (con padding) en vez de usar el
-      // frame completo: el embedding de cada ángulo debe describir el
-      // objeto, no el fondo alrededor de él.
+      // Recortar en vez de usar el frame completo: el embedding de cada
+      // ángulo debe describir el objeto, no el fondo alrededor de él. Usa
+      // kCropConfThreshold (bajo, solo localización) — varios objetos de
+      // prueba no son clases COCO y casi nunca cruzan el umbral de
+      // detección en vivo (0.4). Si ni con el umbral bajo hay nada, recorte
+      // central en vez de imagen entera.
       var toEmbed = decoded;
+      String cropMethod;
+      int? cropClassId;
+      String? cropLabel;
+      double? cropConfidence;
       if (_detector.isLoaded) {
-        final detections = await _detector.detect(decoded);
+        final detections =
+            await _detector.detect(decoded, confThreshold: kCropConfThreshold);
         final best = highestConfidence(detections);
         if (best != null) {
           toEmbed = cropToDetection(decoded, best);
+          cropMethod = 'yolo_detection';
+          cropClassId = cocoLabels.indexOf(best.label);
+          cropLabel = best.label;
+          cropConfidence = best.confidence;
         } else {
-          debugPrint('[multi_angle] YOLO no detectó nada en $angle; usando imagen completa como fallback.');
+          toEmbed = centerCrop(decoded);
+          cropMethod = 'center_crop_fallback';
+          debugPrint('[multi_angle] Sin detección ≥$kCropConfThreshold en $angle; usando center-crop como fallback.');
         }
       } else {
+        cropMethod = 'full_frame_no_model';
         debugPrint('[multi_angle] Detector YOLO no cargado; usando imagen completa como fallback.');
       }
+
+      // ignore: discarded_futures
+      MetricsLogger.instance.logCropSelection(
+        screen: 'multi_angle_capture',
+        objectLabel: '${widget.objectName} (${angle.label})',
+        cropMethod: cropMethod,
+        detectionClassId: cropClassId,
+        detectionLabel: cropLabel,
+        detectionConfidence: cropConfidence,
+      );
 
       final embedding = await _embeddings.extractEmbedding(toEmbed);
 
