@@ -279,7 +279,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       if (_detector.isLoaded) {
         final detections =
             await _detector.detect(decoded, confThreshold: kCropConfThreshold);
-        final best = highestConfidence(detections);
+        final best = bestCropCandidate(detections);
         if (best != null) {
           toEmbed = cropToDetection(decoded, best);
           cropMethod = 'yolo_detection';

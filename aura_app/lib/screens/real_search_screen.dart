@@ -199,7 +199,7 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         if (_detector.isLoaded) {
           final detections =
               await _detector.detect(image, confThreshold: kCropConfThreshold);
-          final best = highestConfidence(detections);
+          final best = bestCropCandidate(detections);
           if (best != null) {
             toEmbed = cropToDetection(image, best);
             cropMethod = 'yolo_detection';

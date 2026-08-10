@@ -83,3 +83,31 @@ Detection? highestConfidence(List<Detection> detections) {
   }
   return best;
 }
+
+/// Ancho/alto mínimo (fracción normalizada del frame) que una detección
+/// necesita para considerarse una caja real y no ruido del regressor.
+///
+/// Verificado con 12 fotos reales de un objeto no-COCO ("llaves"): a
+/// [kCropConfThreshold] (0.15), YOLOv8n devuelve cajas de 0.001-0.003 de
+/// ancho/alto normalizado — un puñado de píxeles pegados a la esquina
+/// (0,0) del frame, sin relación con la posición real del objeto — en 9
+/// de 12 fotos, en float32 e INT8 por igual. El umbral de confianza por sí
+/// solo no filtra esto porque el problema es de tamaño/posición de la
+/// caja, no de la clase asignada.
+const double kMinCropBoxFraction = 0.05;
+
+/// Como [highestConfidence], pero descarta cajas degeneradas: cualquier
+/// detección cuyo ancho o alto normalizado sea menor a
+/// [kMinCropBoxFraction] se ignora, porque recortar sobre ella produce un
+/// crop de pocos píxeles (ruido, no el objeto) antes de reescalarlo para
+/// el embedding.
+Detection? bestCropCandidate(List<Detection> detections) {
+  final candidates = detections.where(
+    (d) => d.rect.width >= kMinCropBoxFraction && d.rect.height >= kMinCropBoxFraction,
+  );
+  Detection? best;
+  for (final d in candidates) {
+    if (best == null || d.confidence > best.confidence) best = d;
+  }
+  return best;
+}
