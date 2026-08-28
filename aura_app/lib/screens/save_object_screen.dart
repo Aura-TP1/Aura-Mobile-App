@@ -475,6 +475,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         Semantics(
           button: true,
           label: _isListeningMic ? 'Escuchando' : 'Dictar nombre por voz',
+          onTap: _handleMicTap,
           child: GestureDetector(
             onTap: _handleMicTap,
             child: Container(

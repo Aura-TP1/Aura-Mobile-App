@@ -310,6 +310,12 @@ class _HomeScreenState extends State<HomeScreen> {
       button: true,
       label: semanticLabel,
       onTapHint: semanticHint,
+      // Sin esto, TalkBack no tiene una acción de accesibilidad directa
+      // que invocar en doble toque — tiene que sintetizar un toque físico
+      // sobre el InkWell de abajo, lo cual es poco confiable y requiere
+      // varios intentos. Con onTap aquí, el doble toque activa el botón
+      // de una vez.
+      onTap: onTap,
       child: Material(
       color: Colors.transparent,
       child: InkWell(

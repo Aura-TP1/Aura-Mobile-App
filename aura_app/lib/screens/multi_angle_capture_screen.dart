@@ -406,6 +406,8 @@ class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
                   child: Semantics(
                     button: true,
                     label: 'Ángulo anterior',
+                    enabled: _currentAngleIndex > 0,
+                    onTap: _currentAngleIndex > 0 ? _moveToPreviousAngle : null,
                     child: OutlinedButton(
                       onPressed: _currentAngleIndex > 0 ? _moveToPreviousAngle : null,
                       style: OutlinedButton.styleFrom(
@@ -455,6 +457,10 @@ class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
                   child: Semantics(
                     button: true,
                     label: 'Ángulo siguiente',
+                    enabled: _currentAngleIndex < CaptureAngle.values.length - 1,
+                    onTap: _currentAngleIndex < CaptureAngle.values.length - 1
+                        ? _moveToNextAngle
+                        : null,
                     child: OutlinedButton(
                       onPressed: _currentAngleIndex < CaptureAngle.values.length - 1
                           ? _moveToNextAngle

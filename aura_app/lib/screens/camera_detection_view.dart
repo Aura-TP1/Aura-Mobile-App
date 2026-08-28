@@ -880,6 +880,7 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
               Semantics(
                 button: true,
                 label: _streamActive ? 'Detener detección' : 'Iniciar detección',
+                onTap: _streamActive ? _stopDetection : _startDetection,
                 child: GestureDetector(
                   onTap: _streamActive ? _stopDetection : _startDetection,
                   child: AnimatedContainer(
@@ -1017,6 +1018,7 @@ class _IconButton extends StatelessWidget {
       button: true,
       label: label,
       enabled: active,
+      onTap: onTap,
       child: GestureDetector(
         onTap: onTap,
         child: Column(

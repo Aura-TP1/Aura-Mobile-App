@@ -311,6 +311,9 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
       child: Semantics(
         button: true,
         label: _isListening ? 'Escuchando' : 'Toca para hablar el nombre del objeto',
+        // Ver comentario equivalente en home_screen.dart: sin onTap aquí,
+        // TalkBack necesita varios dobles toques para activar el botón.
+        onTap: _handleMicTap,
         child: GestureDetector(
         onTap: _handleMicTap,
         child: AnimatedBuilder(
@@ -495,6 +498,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
             button: true,
             label: obj.name,
             onTapHint: 'Buscar este objeto',
+            onTap: () => _selectFromList(obj),
             child: InkWell(
               borderRadius: BorderRadius.circular(12),
               onTap: () => _selectFromList(obj),

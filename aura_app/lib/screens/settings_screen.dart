@@ -220,6 +220,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Semantics(
             button: true,
             label: 'Volver',
+            onTap: () => Navigator.of(context).pop(),
             child: GestureDetector(
               onTap: () => Navigator.of(context).pop(),
               child: Container(
