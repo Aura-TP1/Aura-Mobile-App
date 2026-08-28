@@ -236,20 +236,20 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFAFAFA),
+      backgroundColor: AuraColors.background,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: AuraColors.surface,
         elevation: 0,
         leading: IconButton(
           tooltip: 'Volver',
           constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.maybePop(context),
         ),
         title: const Text(
           'BUSCAR OBJETO',
           style: TextStyle(
-            color: Colors.black,
+            color: Colors.white,
             fontWeight: FontWeight.bold,
             fontSize: 18,
           ),
@@ -287,7 +287,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
                 alignment: Alignment.centerLeft,
                 child: Text(
                   'O selecciona:',
-                  style: TextStyle(fontSize: 16, color: Colors.black87),
+                  style: TextStyle(fontSize: 16, color: Colors.white70),
                 ),
               ),
               const SizedBox(height: 8),
@@ -367,7 +367,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
       textAlign: TextAlign.center,
       style: TextStyle(
         fontSize: 18,
-        color: Colors.black,
+        color: Colors.white,
         fontWeight:
             _currentTarget != null ? FontWeight.bold : FontWeight.normal,
       ),
@@ -381,11 +381,15 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
       focusNode: _targetFocus,
       textCapitalization: TextCapitalization.sentences,
       textInputAction: TextInputAction.done,
-      style: const TextStyle(fontSize: 24, color: Colors.black),
+      style: const TextStyle(fontSize: 24, color: Colors.white),
       decoration: InputDecoration(
         hintText: 'O escribe el nombre',
+        hintStyle: const TextStyle(color: Colors.white54),
+        filled: true,
+        fillColor: AuraColors.surface,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
         ),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -402,7 +406,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
         onPressed: enabled ? _activateSearch : null,
         style: ElevatedButton.styleFrom(
           backgroundColor: kAuraRed,
-          disabledBackgroundColor: Colors.grey.shade300,
+          disabledBackgroundColor: Colors.grey.shade800,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
@@ -465,7 +469,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
         child: Text(
           'No tienes objetos guardados.\nVe a Mis objetos para añadir uno.',
           textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.black54, fontSize: 16),
+          style: TextStyle(color: Colors.white70, fontSize: 16),
         ),
       );
     }
@@ -498,7 +502,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
                 constraints: const BoxConstraints(minHeight: kMinButtonHeight),
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: AuraColors.surface,
                   border: Border.all(color: kAuraRed, width: 2.5),
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -512,11 +516,11 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
                         style: const TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.w600,
-                          color: Colors.black,
+                          color: Colors.white,
                         ),
                       ),
                     ),
-                    const Icon(Icons.chevron_right, color: Colors.grey),
+                    const Icon(Icons.chevron_right, color: Colors.white54),
                   ],
                 ),
               ),

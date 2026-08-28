@@ -19,7 +19,7 @@ import '../services/saved_objects_repository.dart';
 import '../theme/aura_colors.dart';
 
 const Color _kAuraRed = AuraColors.red;
-const Color _kAuraGreen = AuraColors.green;
+const Color _kAuraGreen = AuraColors.foundGreen;
 const double _kMinButtonHeight = kAuraMinButtonHeight;
 
 /// Pantalla de búsqueda real de un objeto personal.

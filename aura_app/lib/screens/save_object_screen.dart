@@ -331,20 +331,20 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFAFAFA),
+      backgroundColor: AuraColors.background,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: AuraColors.surface,
         elevation: 0,
         leading: IconButton(
           tooltip: 'Volver',
           constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.maybePop(context),
         ),
         title: const Text(
           'GUARDAR OBJETO',
           style: TextStyle(
-            color: Colors.black,
+            color: Colors.white,
             fontWeight: FontWeight.bold,
             fontSize: 18,
           ),
@@ -391,7 +391,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF3E0),
+        color: AuraColors.surface,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFFFB74D), width: 1.5),
       ),
@@ -400,13 +400,13 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         children: [
           Row(
             children: [
-              Icon(Icons.info_outline, color: Color(0xFFEF6C00)),
+              Icon(Icons.info_outline, color: Color(0xFFFFB74D)),
               SizedBox(width: 10),
               Expanded(
                 child: Text(
                   'Detección no disponible en este dispositivo',
                   style: TextStyle(
-                    color: Color(0xFFEF6C00),
+                    color: Color(0xFFFFB74D),
                     fontSize: 15,
                     fontWeight: FontWeight.bold,
                   ),
@@ -418,7 +418,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
           Text(
             'Puedes guardar solo el nombre. La búsqueda visual estará '
             'disponible cuando abras AURA en tu celular.',
-            style: TextStyle(color: Colors.black87, fontSize: 14),
+            style: TextStyle(color: Colors.white70, fontSize: 14),
           ),
         ],
       ),
@@ -429,7 +429,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     return Container(
       height: 220,
       decoration: BoxDecoration(
-        color: Colors.black12,
+        color: AuraColors.surface,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Center(
@@ -438,7 +438,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
           child: Text(
             message,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.black54, fontSize: 14),
+            style: const TextStyle(color: Colors.white70, fontSize: 14),
           ),
         ),
       ),
@@ -454,11 +454,15 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
             controller: _nameController,
             focusNode: _nameFocus,
             textCapitalization: TextCapitalization.sentences,
-            style: const TextStyle(fontSize: 24),
+            style: const TextStyle(fontSize: 24, color: Colors.white),
             decoration: InputDecoration(
               hintText: 'Nombre del objeto',
+              hintStyle: const TextStyle(color: Colors.white54),
+              filled: true,
+              fillColor: AuraColors.surface,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
               ),
               contentPadding: const EdgeInsets.symmetric(
                 horizontal: 16,
@@ -516,7 +520,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
          onPressed: _isSaving ? null : _handleSaveTap,
          style: ElevatedButton.styleFrom(
            backgroundColor: _kAuraRed,
-           disabledBackgroundColor: Colors.grey.shade300,
+           disabledBackgroundColor: Colors.grey.shade800,
            shape: RoundedRectangleBorder(
              borderRadius: BorderRadius.circular(12),
            ),

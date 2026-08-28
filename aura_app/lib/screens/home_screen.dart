@@ -5,6 +5,7 @@ import '../services/tts.dart';
 import '../services/voice_input_service.dart';
 import '../services/voice_commands.dart';
 import '../widgets/voice_text_fallback_sheet.dart';
+import '../theme/aura_colors.dart';
 
 /// Texto del menú que el TTS repite periódicamente.
 const String _kMenuSpeech =
@@ -173,9 +174,9 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF2A2A2A),
+      backgroundColor: AuraColors.background,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF2A2A2A),
+        backgroundColor: AuraColors.background,
         elevation: 0,
         automaticallyImplyLeading: false,
         actions: [
@@ -183,7 +184,7 @@ class _HomeScreenState extends State<HomeScreen> {
             tooltip: 'Ayuda',
             constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
             icon: const Icon(Icons.help_outline,
-              color: Color(0xFFFFC107), size: 28),
+              color: AuraColors.yellow, size: 28),
             onPressed: () {
               Navigator.pushNamed(context, '/help');
             },
@@ -213,10 +214,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: _buildMenuButton(
                 label: 'ENCONTRAR\nOBJETO',
                 icon: Icons.camera_alt,
-                // Oscurecido de 0xFF1E88E5 a 0xFF1B79CC: el original daba
-                // 3.68:1 de contraste con texto blanco (WCAG 1.4.3 exige
-                // 4.5:1 para texto normal); este valor da 4.51:1.
-                backgroundColor: const Color(0xFF1B79CC),
+                // 4.51:1 con texto blanco (WCAG 1.4.3 exige 4.5:1).
+                backgroundColor: AuraColors.blue,
                 onTap: () => _handleMenuButtonTap('Encontrar objeto', '/camera'),
                 semanticLabel: 'Encontrar objeto',
                 semanticHint: 'Abre la cámara para detectar objetos',
@@ -227,9 +226,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: _buildMenuButton(
                 label: 'LEER\nTEXTO',
                 icon: Icons.text_fields,
-                // Oscurecido de 0xFFFB8C00 a 0xFFB06200: el original daba
-                // 2.37:1 con texto blanco; este valor da 4.58:1.
-                backgroundColor: const Color(0xFFB06200),
+                // Amarillo vívido: 1.63:1 con texto blanco (no alcanza),
+                // 12.88:1 con texto/ícono negro — se empareja con negro
+                // en vez de blanco (ver foregroundColor abajo).
+                backgroundColor: AuraColors.yellow,
+                foregroundColor: Colors.black,
                 onTap: () => _handleMenuButtonTap('Leer texto', '/camera',
                     arguments: 'ocr'),
                 semanticLabel: 'Leer texto',
@@ -241,9 +242,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: _buildMenuButton(
                 label: 'BUSCAR\nOBJETO',
                 icon: Icons.search,
-                // Oscurecido de 0xFF00C853 a 0xFF008838: el original daba
-                // 2.24:1 con texto blanco; este valor da 4.59:1.
-                backgroundColor: const Color(0xFF008838),
+                // 4.59:1 con texto blanco.
+                backgroundColor: AuraColors.green,
                 onTap: () => _handleMenuButtonTap('Buscar objeto', '/search'),
                 semanticLabel: 'Buscar objeto',
                 semanticHint: 'Abre la búsqueda de objetos guardados',
@@ -254,7 +254,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: _buildMenuButton(
                 label: 'MIS\nOBJETOS',
                 icon: Icons.folder,
-                backgroundColor: const Color(0xFF7C3AED),
+                backgroundColor: AuraColors.purple,
                 onTap: () => _handleMenuButtonTap('Mis objetos', '/my-objects'),
                 semanticLabel: 'Mis objetos',
                 semanticHint: 'Muestra la lista de tus objetos guardados',
@@ -265,11 +265,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: _buildMenuButton(
                 label: _isListening ? 'ESCUCHANDO...' : 'TOCA PARA\nHABLAR',
                 icon: _isListening ? Icons.mic : Icons.mic_none,
-                // 0xFFD84315 original daba 4.44:1 con texto blanco, apenas
-                // bajo el umbral 4.5:1; 0xFFD64215 da 4.51:1.
+                // Rojo (antes marrón): 4.98:1 en reposo, 6.57:1 escuchando
+                // — un rojo más profundo distingue visualmente el estado
+                // activo sin salir de la misma familia de color.
                 backgroundColor: _isListening
-                    ? const Color(0xFFD64215)
-                    : const Color(0xFF6D4C41),
+                    ? AuraColors.redActive
+                    : AuraColors.red,
                 onTap: _handleVoiceCommand,
                 semanticLabel: _isListening ? 'Escuchando' : 'Toca para hablar',
                 semanticHint: 'Activa el comando de voz',
@@ -300,6 +301,10 @@ class _HomeScreenState extends State<HomeScreen> {
     required VoidCallback onTap,
     required String semanticLabel,
     required String semanticHint,
+    // Todos los botones usan texto/ícono blanco salvo el amarillo
+    // (AuraColors.yellow), que necesita negro para cumplir WCAG 1.4.3 —
+    // ver theme/aura_colors.dart.
+    Color foregroundColor = Colors.white,
   }) {
     return Semantics(
       button: true,
@@ -338,7 +343,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Icon(
                     icon,
                     size: 40,
-                    color: Colors.white,
+                    color: foregroundColor,
                   ),
                 ),
               ),
@@ -349,10 +354,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     label,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
-                      color: Colors.white,
+                      color: foregroundColor,
                       height: 1.2,
                     ),
                   ),

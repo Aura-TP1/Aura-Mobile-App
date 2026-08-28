@@ -10,6 +10,7 @@ import 'screens/settings_screen.dart';
 import 'screens/help_screen.dart';
 import 'screens/stt_diagnostics_screen.dart';
 import 'services/app_settings.dart';
+import 'theme/aura_colors.dart';
 
 
 void main() async {
@@ -40,16 +41,21 @@ class AuraApp extends StatelessWidget {
           debugShowCheckedModeBanner: false,
           navigatorKey: AppConfig.navigatorKey,
 
-          // Tema
+          // Tema: gris estándar (mismo que la pantalla principal) como
+          // fondo por defecto de cualquier pantalla que no lo pise
+          // explícitamente. Las pantallas existentes ya fijan su propio
+          // backgroundColor/appBar, así que esto no cambia cómo se ven
+          // hoy — es la base para que una pantalla nueva nazca consistente
+          // con la paleta en vez de blanca por defecto.
           theme: ThemeData(
             useMaterial3: true,
-            scaffoldBackgroundColor: const Color(0xFFFAFAFA),
+            scaffoldBackgroundColor: AuraColors.background,
             appBarTheme: const AppBarTheme(
-              backgroundColor: Colors.white,
+              backgroundColor: AuraColors.surface,
               elevation: 0,
-              iconTheme: IconThemeData(color: Colors.black),
+              iconTheme: IconThemeData(color: Colors.white),
               titleTextStyle: TextStyle(
-                color: Colors.black,
+                color: Colors.white,
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),

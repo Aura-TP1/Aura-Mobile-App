@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/saved_object.dart';
 import '../services/saved_objects_repository.dart';
+import '../theme/aura_colors.dart';
 
 /// Pantalla "MIS OBJETOS": lista los objetos personales del usuario
 /// directamente desde [SavedObjectsRepository]. Permite navegar a
@@ -57,9 +58,9 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF1A3A2E),
+      backgroundColor: AuraColors.background,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0F2922),
+        backgroundColor: AuraColors.surface,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
@@ -77,7 +78,7 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
           Container(
             margin: const EdgeInsets.only(right: 16),
             decoration: BoxDecoration(
-              color: Colors.green,
+              color: AuraColors.green,
               borderRadius: BorderRadius.circular(12),
             ),
             child: IconButton(
@@ -105,7 +106,7 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const Icon(Icons.inventory_2_outlined,
-                  color: Color(0xFF9FC5B8), size: 64),
+                  color: Colors.white70, size: 64),
               const SizedBox(height: 16),
               const Text(
                 'Aún no tienes objetos guardados.',
@@ -116,7 +117,7 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
               const Text(
                 'Presiona + para guardar tu primero.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Color(0xFF9FC5B8), fontSize: 14),
+                style: TextStyle(color: Colors.white70, fontSize: 14),
               ),
               const SizedBox(height: 24),
               ElevatedButton.icon(
@@ -124,7 +125,7 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
                 icon: const Icon(Icons.add),
                 label: const Text('GUARDAR OBJETO'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
+                  backgroundColor: AuraColors.green,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 24,
@@ -147,7 +148,7 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
           margin: const EdgeInsets.only(bottom: 16),
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: const Color(0xFF2A4A3D),
+            color: AuraColors.surface,
             borderRadius: BorderRadius.circular(16),
           ),
           child: Row(
@@ -165,7 +166,7 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
               IconButton(
                 icon: const Icon(
                   Icons.delete_outline,
-                  color: Colors.red,
+                  color: AuraColors.red,
                   size: 26,
                 ),
                 tooltip: 'Eliminar',
