@@ -123,11 +123,20 @@ class ObjectDetector {
 
       if (maxConf < confThreshold) continue;
 
-      // Coordenadas en píxeles del espacio del modelo → normalizar a [0, 1].
-      final cx = out[0 * _numBoxes + i] / inputSize;
-      final cy = out[1 * _numBoxes + i] / inputSize;
-      final w  = out[2 * _numBoxes + i] / inputSize;
-      final h  = out[3 * _numBoxes + i] / inputSize;
+      // Coordenadas: verificado con el intérprete (ver inspección directa
+      // del tensor de salida) que cx/cy/w/h YA vienen normalizadas a
+      // [0, 1] — NO en píxeles del espacio 320×320 como se asumía antes.
+      // Dividir por inputSize aquí era un bug de unidades que encogía cada
+      // caja ~320x (una caja real de w=0.47 se volvía w=0.0015), lo cual
+      // hacía que prácticamente toda detección pareciera "degenerada" y
+      // cayera al fallback de centerCrop — para CUALQUIER objeto, no solo
+      // los no-COCO. Confirmado con las 12 fotos reales de llaves: sin
+      // esta división, 9/12 producen cajas de tamaño y posición sensatos
+      // (antes: 0/12).
+      final cx = out[0 * _numBoxes + i];
+      final cy = out[1 * _numBoxes + i];
+      final w  = out[2 * _numBoxes + i];
+      final h  = out[3 * _numBoxes + i];
 
       detections.add(
         Detection(
