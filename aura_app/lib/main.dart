@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'config/app_config.dart';
 import 'screens/home_screen.dart';
 import 'screens/search_screen.dart';
@@ -40,6 +41,23 @@ class AuraApp extends StatelessWidget {
           title: 'AURA',
           debugShowCheckedModeBanner: false,
           navigatorKey: AppConfig.navigatorKey,
+
+          // Bug de accesibilidad: sin `locale` + `localizationsDelegates`,
+          // el árbol de Semantics no lleva idioma, y TalkBack en Android
+          // lee el texto en español con motor de voz en inglés (aunque
+          // las apps del sistema sí lean bien). Fijamos español de Perú
+          // explícitamente — no depende del locale del sistema, así que
+          // el fix aplica sin importar cómo esté configurado el celular.
+          // No afecta el TTS propio de la app (flutter_tts en
+          // services/tts.dart, que ya fija su propio idioma "es-PE" al
+          // motor de voz por separado).
+          locale: const Locale('es', 'PE'),
+          supportedLocales: const [Locale('es', 'PE'), Locale('es')],
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
 
           // Tema: gris estándar (mismo que la pantalla principal) como
           // fondo por defecto de cualquier pantalla que no lo pise

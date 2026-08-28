@@ -9,7 +9,13 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  
+
+  # Localización: sin esto, MaterialApp no puede declarar `locale` y el
+  # árbol de accesibilidad no lleva idioma — TalkBack termina leyendo el
+  # texto en español con el motor de voz en inglés (ver main.dart).
+  flutter_localizations:
+    sdk: flutter
+
   # ML/AI
   tflite_flutter: ^0.12.1
   # OCR offline on-device (modo lectura de texto en la cámara)
