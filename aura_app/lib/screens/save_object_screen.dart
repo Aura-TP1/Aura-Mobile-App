@@ -276,6 +276,9 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       int? cropClassId;
       String? cropLabel;
       double? cropConfidence;
+      String? cropFallbackReason;
+      double? discardedBoxWidth;
+      double? discardedBoxHeight;
       if (_detector.isLoaded) {
         final detections =
             await _detector.detect(decoded, confThreshold: kCropConfThreshold);
@@ -289,7 +292,15 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         } else {
           toEmbed = centerCrop(decoded);
           cropMethod = 'center_crop_fallback';
-          debugPrint('[save_object] Sin detección ≥$kCropConfThreshold; usando center-crop como fallback.');
+          if (detections.isEmpty) {
+            cropFallbackReason = 'no_detection';
+          } else {
+            cropFallbackReason = 'box_too_small';
+            final discarded = highestConfidence(detections);
+            discardedBoxWidth = discarded?.rect.width;
+            discardedBoxHeight = discarded?.rect.height;
+          }
+          debugPrint('[save_object] Sin detección ≥$kCropConfThreshold; usando center-crop como fallback ($cropFallbackReason).');
         }
       } else {
         cropMethod = 'full_frame_no_model';
@@ -304,6 +315,9 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         detectionClassId: cropClassId,
         detectionLabel: cropLabel,
         detectionConfidence: cropConfidence,
+        cropFallbackReason: cropFallbackReason,
+        discardedBoxWidth: discardedBoxWidth,
+        discardedBoxHeight: discardedBoxHeight,
       );
 
       return await _embeddings.extractEmbedding(toEmbed);

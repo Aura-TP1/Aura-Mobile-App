@@ -106,6 +106,16 @@ class MetricsLogger {
     int? cropDetectionClassId,
     String? cropDetectionLabel,
     double? cropDetectionConfidence,
+    // Por qué se cayó a centerCrop, cuando cropMethod == 'center_crop_fallback':
+    // 'no_detection' (YOLO no encontró nada ≥ kCropConfThreshold) o
+    // 'box_too_small' (encontró algo, pero bestCropCandidate lo descartó por
+    // tamaño — ver kMinCropBoxFraction en detection_crop.dart). Junto con
+    // discardedBoxWidth/Height, permite diferenciar en el log si el cuello de
+    // botella es que YOLO no ve nada o que ve algo demasiado chico, sin tener
+    // que adivinar a partir de campos que hoy quedan null en ambos casos.
+    String? cropFallbackReason,
+    double? discardedBoxWidth,
+    double? discardedBoxHeight,
   }) async {
     try {
       String? topOtherObjectId;
@@ -149,6 +159,9 @@ class MetricsLogger {
         'cropDetectionClassId': cropDetectionClassId,
         'cropDetectionLabel': cropDetectionLabel,
         'cropDetectionConfidence': cropDetectionConfidence,
+        'cropFallbackReason': cropFallbackReason,
+        'discardedBoxWidth': discardedBoxWidth,
+        'discardedBoxHeight': discardedBoxHeight,
       };
       await _appendLine(_searchFileName, entry);
     } catch (e) {
@@ -168,6 +181,9 @@ class MetricsLogger {
     int? detectionClassId,
     String? detectionLabel,
     double? detectionConfidence,
+    String? cropFallbackReason,
+    double? discardedBoxWidth,
+    double? discardedBoxHeight,
   }) async {
     try {
       final entry = <String, dynamic>{
@@ -178,6 +194,9 @@ class MetricsLogger {
         'detectionClassId': detectionClassId,
         'detectionLabel': detectionLabel,
         'detectionConfidence': detectionConfidence,
+        'cropFallbackReason': cropFallbackReason,
+        'discardedBoxWidth': discardedBoxWidth,
+        'discardedBoxHeight': discardedBoxHeight,
       };
       await _appendLine(_cropFileName, entry);
     } catch (e) {

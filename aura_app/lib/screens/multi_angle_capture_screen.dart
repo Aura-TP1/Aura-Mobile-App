@@ -145,6 +145,9 @@ class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
       int? cropClassId;
       String? cropLabel;
       double? cropConfidence;
+      String? cropFallbackReason;
+      double? discardedBoxWidth;
+      double? discardedBoxHeight;
       if (_detector.isLoaded) {
         final detections =
             await _detector.detect(decoded, confThreshold: kCropConfThreshold);
@@ -158,7 +161,15 @@ class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
         } else {
           toEmbed = centerCrop(decoded);
           cropMethod = 'center_crop_fallback';
-          debugPrint('[multi_angle] Sin detección ≥$kCropConfThreshold en $angle; usando center-crop como fallback.');
+          if (detections.isEmpty) {
+            cropFallbackReason = 'no_detection';
+          } else {
+            cropFallbackReason = 'box_too_small';
+            final discarded = highestConfidence(detections);
+            discardedBoxWidth = discarded?.rect.width;
+            discardedBoxHeight = discarded?.rect.height;
+          }
+          debugPrint('[multi_angle] Sin detección ≥$kCropConfThreshold en $angle; usando center-crop como fallback ($cropFallbackReason).');
         }
       } else {
         cropMethod = 'full_frame_no_model';
@@ -173,6 +184,9 @@ class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
         detectionClassId: cropClassId,
         detectionLabel: cropLabel,
         detectionConfidence: cropConfidence,
+        cropFallbackReason: cropFallbackReason,
+        discardedBoxWidth: discardedBoxWidth,
+        discardedBoxHeight: discardedBoxHeight,
       );
 
       final embedding = await _embeddings.extractEmbedding(toEmbed);

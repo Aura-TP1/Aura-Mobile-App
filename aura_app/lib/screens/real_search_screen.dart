@@ -196,6 +196,9 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         int? cropClassId;
         String? cropLabel;
         double? cropConfidence;
+        String? cropFallbackReason;
+        double? discardedBoxWidth;
+        double? discardedBoxHeight;
         if (_detector.isLoaded) {
           final detections =
               await _detector.detect(image, confThreshold: kCropConfThreshold);
@@ -209,7 +212,15 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           } else {
             toEmbed = centerCrop(image);
             cropMethod = 'center_crop_fallback';
-            debugPrint('[real_search] Sin detección ≥$kCropConfThreshold; usando center-crop como fallback.');
+            if (detections.isEmpty) {
+              cropFallbackReason = 'no_detection';
+            } else {
+              cropFallbackReason = 'box_too_small';
+              final discarded = highestConfidence(detections);
+              discardedBoxWidth = discarded?.rect.width;
+              discardedBoxHeight = discarded?.rect.height;
+            }
+            debugPrint('[real_search] Sin detección ≥$kCropConfThreshold; usando center-crop como fallback ($cropFallbackReason).');
           }
         } else {
           cropMethod = 'full_frame_no_model';
@@ -262,6 +273,9 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           cropClassId: cropClassId,
           cropLabel: cropLabel,
           cropConfidence: cropConfidence,
+          cropFallbackReason: cropFallbackReason,
+          discardedBoxWidth: discardedBoxWidth,
+          discardedBoxHeight: discardedBoxHeight,
         );
 
         if (bestSim >= _threshold) {
@@ -292,6 +306,9 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     int? cropClassId,
     String? cropLabel,
     double? cropConfidence,
+    String? cropFallbackReason,
+    double? discardedBoxWidth,
+    double? discardedBoxHeight,
   }) async {
     try {
       final allSavedObjects = await _savedObjectsRepo.getAll();
@@ -322,6 +339,9 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         cropDetectionClassId: cropClassId,
         cropDetectionLabel: cropLabel,
         cropDetectionConfidence: cropConfidence,
+        cropFallbackReason: cropFallbackReason,
+        discardedBoxWidth: discardedBoxWidth,
+        discardedBoxHeight: discardedBoxHeight,
       );
     } catch (e) {
       debugPrint('RealSearchScreen metrics logging error: $e');
