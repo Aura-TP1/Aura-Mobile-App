@@ -6,13 +6,13 @@ import '../models/saved_object.dart';
 import '../services/saved_objects_repository.dart';
 import '../services/voice_input_service.dart';
 import '../services/tts.dart';
+import '../theme/aura_colors.dart';
 import 'real_search_screen.dart';
 
-/// Color rojo de marca AURA.
-const Color kAuraRed = Color(0xFFE53935);
+const Color kAuraRed = AuraColors.red;
 
 /// Altura mínima de botones para accesibilidad (adultos mayores).
-const double kMinButtonHeight = 64;
+const double kMinButtonHeight = kAuraMinButtonHeight;
 
 /// Pantalla "BUSCAR OBJETO": entrada de voz simulada, lista de objetos
 /// guardados y activación de búsqueda.

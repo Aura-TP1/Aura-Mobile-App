@@ -6,8 +6,6 @@ import '../services/voice_input_service.dart';
 import '../services/voice_commands.dart';
 import '../widgets/voice_text_fallback_sheet.dart';
 
-const Color kAuraRed = Color(0xFFE53935);
-
 /// Texto del menú que el TTS repite periódicamente.
 const String _kMenuSpeech =
     'Elige una opción: Encontrar objeto, Leer texto, Buscar objeto, Mis objetos, '

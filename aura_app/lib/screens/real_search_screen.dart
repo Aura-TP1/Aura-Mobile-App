@@ -16,10 +16,11 @@ import '../services/tts.dart';
 import '../services/app_settings.dart';
 import '../services/metrics_logger.dart';
 import '../services/saved_objects_repository.dart';
+import '../theme/aura_colors.dart';
 
-const Color _kAuraRed = Color(0xFFE53935);
-const Color _kAuraGreen = Color(0xFF2E7D32);
-const double _kMinButtonHeight = 64;
+const Color _kAuraRed = AuraColors.red;
+const Color _kAuraGreen = AuraColors.green;
+const double _kMinButtonHeight = kAuraMinButtonHeight;
 
 /// Pantalla de búsqueda real de un objeto personal.
 ///

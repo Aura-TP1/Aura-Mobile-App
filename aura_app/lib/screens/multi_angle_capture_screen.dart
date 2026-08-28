@@ -11,8 +11,9 @@ import '../services/metrics_logger.dart';
 import '../services/object_detector.dart';
 import '../services/stt_service.dart';
 import '../services/tts.dart';
+import '../theme/aura_colors.dart';
 
-const Color _kAuraRed = Color(0xFFE53935);
+const Color _kAuraRed = AuraColors.red;
 
 /// Define los ángulos a capturar
 enum CaptureAngle {

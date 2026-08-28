@@ -16,11 +16,11 @@ import '../services/object_detector.dart';
 import '../services/saved_objects_repository.dart';
 import '../services/voice_input_service.dart';
 import '../services/tts.dart';
+import '../theme/aura_colors.dart';
 import 'multi_angle_capture_screen.dart' show MultiAngleCaptureScreen, CaptureAngle;
 
-/// Color rojo de marca AURA (mismo que usan search/home).
-const Color _kAuraRed = Color(0xFFE53935);
-const double _kMinButtonHeight = 64;
+const Color _kAuraRed = AuraColors.red;
+const double _kMinButtonHeight = kAuraMinButtonHeight;
 
 /// Pantalla para guardar un objeto personal.
 ///
