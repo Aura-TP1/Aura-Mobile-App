@@ -179,13 +179,7 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF2A2A2A),
         elevation: 0,
-        leading: IconButton(
-          tooltip: 'Menú',
-          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-          icon: const Icon(Icons.menu, color: Colors.white, size: 28),
-          onPressed: () {
-          },
-        ),
+        automaticallyImplyLeading: false,
         actions: [
           IconButton(
             tooltip: 'Ayuda',

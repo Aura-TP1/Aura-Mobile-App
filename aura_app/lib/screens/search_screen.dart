@@ -254,14 +254,6 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
             fontSize: 18,
           ),
         ),
-        actions: [
-          IconButton(
-            tooltip: 'Probar cámara real',
-            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-            icon: const Icon(Icons.videocam, color: Colors.black),
-            onPressed: () => Navigator.pushNamed(context, '/camera'),
-          ),
-        ],
       ),
       body: SafeArea(
         child: Padding(
@@ -298,9 +290,6 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
                   style: TextStyle(fontSize: 16, color: Colors.black87),
                 ),
               ),
-              // TODO: Adding objects will be done via camera command.
-              // User will point camera at an object and say "Guarda esto."
-              // This requires camera + speech recognition integration — implement later.
               const SizedBox(height: 8),
               Expanded(
                 child: FocusTraversalOrder(

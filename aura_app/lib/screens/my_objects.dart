@@ -54,11 +54,6 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
     );
   }
 
-  String _formatDate(DateTime d) {
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${two(d.day)}/${two(d.month)}/${d.year}';
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -97,30 +92,7 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
           ? const Center(
               child: CircularProgressIndicator(color: Colors.white),
             )
-          : Column(
-              children: [
-                _buildCounter(),
-                Expanded(child: _buildList()),
-              ],
-            ),
-    );
-  }
-
-  Widget _buildCounter() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      color: const Color(0xFF2E5F4F),
-      child: Row(
-        children: [
-          const Icon(Icons.info_outline, color: Colors.white, size: 20),
-          const SizedBox(width: 8),
-          Text(
-            '${_objects.length} objetos guardados',
-            style: const TextStyle(color: Colors.white, fontSize: 16),
-          ),
-        ],
-      ),
+          : _buildList(),
     );
   }
 
@@ -180,77 +152,14 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
           ),
           child: Row(
             children: [
-              Container(
-                width: 60,
-                height: 60,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1A3A2E),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  obj.hasEmbedding
-                      ? Icons.image_search
-                      : Icons.label_outline,
-                  color: const Color(0xFF9FC5B8),
-                  size: 28,
-                ),
-              ),
-              const SizedBox(width: 16),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      obj.name,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Guardado el ${_formatDate(obj.createdAt)}',
-                      style: const TextStyle(
-                        color: Color(0xFF9FC5B8),
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    // Mostrar ángulos capturados
-                    if (obj.embeddings.isNotEmpty)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.green.withOpacity(0.3),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          '${obj.embeddings.length} ángulos capturados',
-                          style: const TextStyle(
-                            color: Colors.green,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      )
-                    else if (obj.embedding.isNotEmpty)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.withOpacity(0.3),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Text(
-                          '1 imagen guardada',
-                          style: TextStyle(
-                            color: Colors.blue,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                  ],
+                child: Text(
+                  obj.name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
               IconButton(
