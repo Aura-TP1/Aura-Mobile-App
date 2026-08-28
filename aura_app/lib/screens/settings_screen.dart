@@ -409,8 +409,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       child: Slider(
                         value: _fontScale,
                         min: 0.8,
-                        max: 1.6,
-                        divisions: 8,
+                        max: 2.0,
+                        divisions: 12,
                         onChanged: (value) {
                           setState(() => _fontScale = value);
                           AppSettings.instance.setFontScale(value);

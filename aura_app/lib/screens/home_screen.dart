@@ -316,8 +316,12 @@ class _HomeScreenState extends State<HomeScreen> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
         child: Container(
+          // Antes tenía además `height: 92` fijo, que con escala de letra
+          // alta (hasta 200%, ver Ajustes → Visual) no dejaba crecer el
+          // botón y cortaba la segunda línea del texto. Solo minHeight:
+          // el botón crece si el texto lo necesita, y sigue teniendo al
+          // menos 92px con el tamaño de letra por defecto.
           constraints: const BoxConstraints(minHeight: 92),
-          height: 92,
           decoration: BoxDecoration(
             color: backgroundColor,
             borderRadius: BorderRadius.circular(20),

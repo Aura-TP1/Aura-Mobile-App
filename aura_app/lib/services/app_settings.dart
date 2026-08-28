@@ -71,7 +71,12 @@ class AppSettings extends ChangeNotifier {
   double sttListenForMs = 30000;
 
   /// Silencio máximo tolerado antes de cerrar la sesión de voz (ms).
-  double sttPauseForMs = 4000;
+  ///
+  /// Antes 4000. Subido a 5500: adultos mayores suelen hablar con pausas
+  /// más largas entre palabras al pensar la frase, y 4s cortaba la
+  /// escucha a mitad de camino en ese uso. Sigue siendo ajustable en
+  /// Ajustes → Tiempos y accesibilidad.
+  double sttPauseForMs = 5500;
 
   /// Etiqueta de condición de prueba manual (para métricas), ej.
   /// "same_background", "different_background", "similar_item_test".

@@ -63,6 +63,8 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
         backgroundColor: AuraColors.surface,
         elevation: 0,
         leading: IconButton(
+          tooltip: 'Volver',
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context),
         ),
