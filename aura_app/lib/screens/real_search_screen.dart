@@ -105,9 +105,13 @@ class _RealSearchScreenState extends State<RealSearchScreen>
       return;
     }
 
-    await _audio.speak(
+    // Fire-and-forget: antes esto era `await`, así que la cámara ni
+    // empezaba a inicializar hasta que el TTS terminaba de hablar la
+    // frase completa — mismo bug que en save_object_screen.dart, la
+    // cámara se veía en gris mucho más de lo necesario.
+    unawaited(_audio.speak(
       'Buscando ${widget.target}. Apunta la cámara al objeto.',
-    );
+    ));
 
     // Cámara y modelo se cargan en paralelo.
     await Future.wait([_initCamera(), _loadModel()]);

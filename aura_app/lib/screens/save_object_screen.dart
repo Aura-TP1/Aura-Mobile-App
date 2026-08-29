@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:camera/camera.dart';
@@ -84,13 +85,23 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
 
   Future<void> _init() async {
     await _audio.init();
-    await _audio.speak(kIsWeb
+    // Antes esto esperaba (await) a que el mensaje de voz terminara de
+    // hablar ANTES de siquiera empezar a inicializar la cámara — con el
+    // TTS tardando unos segundos en pronunciar la frase, la cámara ni
+    // arrancaba a cargar hasta que se cortaba de hablar, y encima cámara
+    // y modelo se cargaban uno después del otro (no en paralelo). El
+    // usuario veía la cámara en gris mucho más tiempo del necesario.
+    // Fire-and-forget: el aviso se sigue escuchando, pero ya no bloquea
+    // nada.
+    unawaited(_audio.speak(kIsWeb
         ? 'Guardar objeto. Escribe o dicta el nombre.'
-        : 'Apunta la cámara al objeto y di o escribe el nombre.');
+        : 'Apunta la cámara al objeto y di o escribe el nombre.'));
     if (!kIsWeb) {
-      await _initCamera();
-      await _embeddings.loadModel();
-      await _detector.loadModel();
+      await Future.wait([
+        _initCamera(),
+        _embeddings.loadModel(),
+        _detector.loadModel(),
+      ]);
       if (mounted) setState(() => _modelLoaded = _embeddings.isLoaded);
     }
   }
