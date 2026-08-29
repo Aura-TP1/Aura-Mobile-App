@@ -224,14 +224,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: GestureDetector(
               onTap: () => Navigator.of(context).pop(),
               child: Container(
-                width: 48,
-                height: 48,
+                width: 56,
+                height: 56,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity( 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+                child: const Icon(Icons.arrow_back, color: Colors.white, size: 32),
               ),
             ),
           ),

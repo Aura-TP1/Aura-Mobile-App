@@ -255,7 +255,7 @@ class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
         leading: IconButton(
           tooltip: 'Volver',
           constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          icon: const Icon(Icons.arrow_back, color: Colors.white, size: 32),
           onPressed: () => Navigator.maybePop(context),
         ),
         title: const Text(
