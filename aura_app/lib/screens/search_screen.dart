@@ -247,7 +247,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
           onPressed: () => Navigator.maybePop(context),
         ),
         title: const Text(
-          'BUSCAR OBJETO',
+          'BUSCAR MI OBJETO',
           style: TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.bold,

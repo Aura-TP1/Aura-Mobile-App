@@ -9,7 +9,7 @@ import '../theme/aura_colors.dart';
 
 /// Texto del menú que el TTS repite periódicamente.
 const String _kMenuSpeech =
-    'Elige una opción: Buscar mi objeto, Leer texto, Buscar objeto, Mis objetos, '
+    'Elige una opción: Encontrar objeto, Leer texto, Buscar mi objeto, Mis objetos, '
     'o Toca para hablar.';
 const String _kWelcomeSpeech = 'Hola, soy AURA. ¿Qué necesitas? $_kMenuSpeech';
 
@@ -216,12 +216,12 @@ class _HomeScreenState extends State<HomeScreen> {
               FocusTraversalOrder(
                 order: const NumericFocusOrder(1),
                 child: _buildMenuButton(
-                label: 'BUSCAR MI\nOBJETO',
+                label: 'ENCONTRAR\nOBJETO',
                 icon: Icons.camera_alt,
                 // 4.51:1 con texto blanco (WCAG 1.4.3 exige 4.5:1).
                 backgroundColor: AuraColors.blue,
-                onTap: () => _handleMenuButtonTap('Buscar mi objeto', '/camera'),
-                semanticLabel: 'Buscar mi objeto',
+                onTap: () => _handleMenuButtonTap('Encontrar objeto', '/camera'),
+                semanticLabel: 'Encontrar objeto',
                 semanticHint: 'Abre la cámara para detectar objetos',
               )),
               const SizedBox(height: 14),
@@ -244,12 +244,12 @@ class _HomeScreenState extends State<HomeScreen> {
               FocusTraversalOrder(
                 order: const NumericFocusOrder(3),
                 child: _buildMenuButton(
-                label: 'BUSCAR\nOBJETO',
+                label: 'BUSCAR MI\nOBJETO',
                 icon: Icons.search,
                 // 4.59:1 con texto blanco.
                 backgroundColor: AuraColors.green,
-                onTap: () => _handleMenuButtonTap('Buscar objeto', '/search'),
-                semanticLabel: 'Buscar objeto',
+                onTap: () => _handleMenuButtonTap('Buscar mi objeto', '/search'),
+                semanticLabel: 'Buscar mi objeto',
                 semanticHint: 'Abre la búsqueda de objetos guardados',
               )),
               const SizedBox(height: 14),

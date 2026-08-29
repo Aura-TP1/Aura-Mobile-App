@@ -518,9 +518,18 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
   }
 
    Widget _buildSaveButton() {
+     // Antes el botón se podía tocar apenas se abría la pantalla, aunque la
+     // cámara/el modelo todavía estuvieran cargando (siempre tardan un
+     // poco) — eso disparaba el aviso de "no está lista todavía" apenas el
+     // usuario tocaba, que se sentía como que la app fallaba. Ahora el
+     // botón queda deshabilitado (con su propio label) hasta que de verdad
+     // esté listo, en vez de dejar tocar y recién ahí avisar.
+     final notReady = !kIsWeb && (!_cameraReady || !_modelLoaded);
      final String label;
      if (_isSaving) {
        label = 'GUARDANDO...';
+     } else if (notReady) {
+       label = 'PREPARANDO CÁMARA...';
      } else if (kIsWeb) {
        label = 'GUARDAR NOMBRE';
      } else {
@@ -529,7 +538,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
      return SizedBox(
        height: _kMinButtonHeight,
        child: ElevatedButton(
-         onPressed: _isSaving ? null : _handleSaveTap,
+         onPressed: (_isSaving || notReady) ? null : _handleSaveTap,
          style: ElevatedButton.styleFrom(
            backgroundColor: _kAuraRed,
            disabledBackgroundColor: Colors.grey.shade800,

@@ -318,6 +318,13 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     _convertCameraImageAsync(frame).then((image) {
       if (image == null) { _isDetecting = false; return; }
       _handleConvertedFrame(image, frameStart);
+    }).catchError((e) {
+      // Si el usuario sale de la pantalla mientras un frame está a mitad
+      // de conversión (isolate en vuelo), esa conversión puede fallar al
+      // resolver contra un controller/estado ya descartado. Sin este
+      // catchError, esa excepción no manejada crasheaba la app al salir.
+      debugPrint('Error convirtiendo frame: $e');
+      _isDetecting = false;
     });
   }
 
@@ -565,7 +572,16 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
     _lastReadText = normalized;
     setState(() => _statusMessage = 'Leyendo texto...');
 
-    _audio.speak(text).then((_) {
+    // Timeout de seguridad: si el motor TTS se cuelga (no resuelve el
+    // Future de speak(), algo que pasa en algunos dispositivos/versiones
+    // de Android), _ocrSpeaking se quedaba en true para siempre y el
+    // bucle de OCR dejaba de tomar fotos nuevas indefinidamente — la
+    // app parecía "trabada" mostrando el último texto leído sin importar
+    // a dónde se apuntara la cámara después.
+    _audio.speak(text).timeout(
+      const Duration(seconds: 12),
+      onTimeout: () => debugPrint('OCR: speak() no resolvió a tiempo, liberando.'),
+    ).then((_) {
       _ocrSpeaking = false;
       _lastReadAt = DateTime.now();
       if (mounted) setState(() => _statusMessage = 'Modo lectura de texto.');
@@ -788,12 +804,19 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
               tooltip: 'Volver',
               constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
               icon: const Icon(Icons.arrow_back, color: Colors.white, size: 32),
-              onPressed: () => Navigator.of(context).maybePop(),
+              // Detener el stream/loop de detección ANTES de salir: si queda
+              // un frame en vuelo (conversión/inferencia async) cuando el
+              // widget se dispone, puede fallar contra un controller ya
+              // liberado. Parar primero reduce esa ventana.
+              onPressed: () {
+                _stopDetection();
+                Navigator.of(context).maybePop();
+              },
             ),
             const SizedBox(width: 4),
             Expanded(
               child: Text(
-                _mode == CamMode.ocr ? 'LEER TEXTO' : 'BUSCAR MI OBJETO',
+                _mode == CamMode.ocr ? 'LEER TEXTO' : 'ENCONTRAR OBJETO',
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: Colors.white,
@@ -864,8 +887,8 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
                   onTap: _streamActive ? _stopDetection : _startDetection,
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
-                    width: 84,
-                    height: 84,
+                    width: 104,
+                    height: 104,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: _streamActive ? Colors.red : Colors.white,
@@ -886,7 +909,7 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
                       child: Icon(
                         _streamActive ? Icons.stop_rounded : Icons.play_arrow_rounded,
                         color: _streamActive ? Colors.white : Colors.black,
-                        size: 44,
+                        size: 56,
                       ),
                     ),
                   ),
@@ -955,36 +978,43 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
       // sentía como que "el micrófono" hablaba solo de porcentajes.
       label: 'Detectado: ${d.label}',
       liveRegion: true,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.12),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withOpacity(0.2)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.visibility, color: Colors.white70, size: 18),
-            const SizedBox(width: 10),
-            Flexible(
-              child: Text(
-                d.label.toUpperCase(),
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 2,
+      // ExcludeSemantics: aunque el label de arriba ya no menciona el
+      // porcentaje, los Text hijos (ej. "45%") generan su propio nodo de
+      // accesibilidad y Flutter los fusiona con el del padre — TalkBack
+      // seguía leyendo el porcentaje pese al cambio de label. Sin esto,
+      // solo se anuncia el label explícito.
+      child: ExcludeSemantics(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white.withOpacity(0.2)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.visibility, color: Colors.white70, size: 18),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Text(
+                  d.label.toUpperCase(),
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 2,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              '$pct%',
-              style: const TextStyle(color: Colors.white54, fontSize: 14),
-            ),
-          ],
+              const SizedBox(width: 10),
+              Text(
+                '$pct%',
+                style: const TextStyle(color: Colors.white54, fontSize: 14),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1023,8 +1053,8 @@ class _IconButton extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 64,
-                height: 64,
+                width: 80,
+                height: 80,
                 constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
@@ -1033,7 +1063,7 @@ class _IconButton extends StatelessWidget {
                       : Colors.white.withOpacity(0.05),
                 ),
                 child: Icon(icon,
-                    color: active ? Colors.white : Colors.white30, size: 28),
+                    color: active ? Colors.white : Colors.white30, size: 36),
               ),
               const SizedBox(height: 4),
               Text(label,

@@ -23,15 +23,15 @@ class _HelpScreenState extends State<HelpScreen> {
     },
     {
       'step': 'PASO 1',
-      'title': 'Buscar mi objeto y Leer texto',
-      'description': 'Con el botón Buscar mi objeto, la cámara te dice qué '
+      'title': 'Encontrar objeto y Leer texto',
+      'description': 'Con el botón Encontrar objeto, la cámara te dice qué '
           'cosas ve. Con el botón Leer texto, la cámara lee en voz alta lo '
           'que esté escrito, como una carta o una etiqueta.',
     },
     {
       'step': 'PASO 2',
-      'title': 'Buscar objeto y Mis objetos',
-      'description': 'Con el botón Buscar objeto puedes pedirle a AURA que '
+      'title': 'Buscar mi objeto y Mis objetos',
+      'description': 'Con el botón Buscar mi objeto puedes pedirle a AURA que '
           'te ayude a encontrar algo. Con el botón Mis objetos puedes ver '
           'la lista de las cosas que ya guardaste antes.',
     },
