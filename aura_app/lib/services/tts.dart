@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:vibration/vibration.dart';
 
@@ -24,6 +25,21 @@ class AudioFeedback {
   /// Tiempo mínimo entre anuncios (spec: ≥ 3 s por defecto, ajustable en
   /// Ajustes > Tiempos y accesibilidad — WCAG 2.2.1).
   Duration get repeatCooldown => AppSettings.instance.ttsRepeatCooldown;
+
+  /// `true` si hay un lector de pantalla (TalkBack en Android, VoiceOver en
+  /// iOS) activo. No requiere `BuildContext` — Flutter lo expone global vía
+  /// `SemanticsBinding`.
+  ///
+  /// Con TalkBack activo, dos voces hablando a la vez (la del propio TTS de
+  /// la app y la de TalkBack anunciando lo que el usuario va enfocando) es
+  /// confuso — usar esto para no repetir en voz alta contenido que ya tiene
+  /// un `Semantics`/label equivalente que TalkBack va a leer solo. No
+  /// silencia `speak()` en general (habría que exponer cada anuncio
+  /// dinámico como `Semantics(liveRegion: true)` primero, que es una tarea
+  /// más grande) — se usa puntualmente donde hoy hay una repetición clara,
+  /// como el recordatorio periódico del menú.
+  bool get isScreenReaderActive =>
+      SemanticsBinding.instance.accessibilityFeatures.accessibleNavigation;
 
   Future<void> init() async {
     // Idioma: es-PE (aceptado por el spec junto con es-MX). Se mantiene el

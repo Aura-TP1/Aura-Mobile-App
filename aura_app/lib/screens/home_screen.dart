@@ -9,7 +9,7 @@ import '../theme/aura_colors.dart';
 
 /// Texto del menú que el TTS repite periódicamente.
 const String _kMenuSpeech =
-    'Elige una opción: Encontrar objeto, Leer texto, Buscar objeto, Mis objetos, '
+    'Elige una opción: Buscar mi objeto, Leer texto, Buscar objeto, Mis objetos, '
     'o Toca para hablar.';
 const String _kWelcomeSpeech = 'Hola, soy AURA. ¿Qué necesitas? $_kMenuSpeech';
 
@@ -67,6 +67,10 @@ class _HomeScreenState extends State<HomeScreen> {
       // No pisar una acción reciente del usuario.
       final sinceAction = DateTime.now().difference(_lastUserActionAt);
       if (sinceAction < _kUserActionGrace) return;
+      // Con TalkBack activo, este recordatorio es puro ruido: TalkBack ya
+      // anuncia el nombre de cada botón al enfocarlo, repetirlo entero cada
+      // minuto por encima es confuso, no útil.
+      if (_audio.isScreenReaderActive) return;
       _audio.speak(_kMenuSpeech);
     });
   }
@@ -212,12 +216,12 @@ class _HomeScreenState extends State<HomeScreen> {
               FocusTraversalOrder(
                 order: const NumericFocusOrder(1),
                 child: _buildMenuButton(
-                label: 'ENCONTRAR\nOBJETO',
+                label: 'BUSCAR MI\nOBJETO',
                 icon: Icons.camera_alt,
                 // 4.51:1 con texto blanco (WCAG 1.4.3 exige 4.5:1).
                 backgroundColor: AuraColors.blue,
-                onTap: () => _handleMenuButtonTap('Encontrar objeto', '/camera'),
-                semanticLabel: 'Encontrar objeto',
+                onTap: () => _handleMenuButtonTap('Buscar mi objeto', '/camera'),
+                semanticLabel: 'Buscar mi objeto',
                 semanticHint: 'Abre la cámara para detectar objetos',
               )),
               const SizedBox(height: 14),

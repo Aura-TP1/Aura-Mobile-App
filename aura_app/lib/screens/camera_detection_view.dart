@@ -793,7 +793,7 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
             const SizedBox(width: 4),
             Expanded(
               child: Text(
-                _mode == CamMode.ocr ? 'LEER TEXTO' : 'ENCONTRAR OBJETO',
+                _mode == CamMode.ocr ? 'LEER TEXTO' : 'BUSCAR MI OBJETO',
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: Colors.white,

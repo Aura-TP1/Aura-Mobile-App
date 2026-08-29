@@ -23,8 +23,8 @@ class _HelpScreenState extends State<HelpScreen> {
     },
     {
       'step': 'PASO 1',
-      'title': 'Encontrar objeto y Leer texto',
-      'description': 'Con el botón Encontrar objeto, la cámara te dice qué '
+      'title': 'Buscar mi objeto y Leer texto',
+      'description': 'Con el botón Buscar mi objeto, la cámara te dice qué '
           'cosas ve. Con el botón Leer texto, la cámara lee en voz alta lo '
           'que esté escrito, como una carta o una etiqueta.',
     },
