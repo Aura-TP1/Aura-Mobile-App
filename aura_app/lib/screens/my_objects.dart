@@ -57,16 +57,26 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // FocusTraversalGroup + orden explícito en "volver" y "+": sin esto,
+    // TalkBack no tiene garantizado que el botón "volver" sea lo primero
+    // que enfoca al explorar la pantalla (a diferencia de home_screen.dart,
+    // que sí ordena sus botones así) — para evitar que alguien active por
+    // error "Guardar nuevo objeto" pensando que estaba tocando "volver".
+    return FocusTraversalGroup(
+      policy: OrderedTraversalPolicy(),
+      child: Scaffold(
       backgroundColor: AuraColors.background,
       appBar: AppBar(
         backgroundColor: AuraColors.surface,
         elevation: 0,
-        leading: IconButton(
-          tooltip: 'Volver',
-          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
+        leading: FocusTraversalOrder(
+          order: const NumericFocusOrder(1),
+          child: IconButton(
+            tooltip: 'Volver',
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            icon: const Icon(Icons.arrow_back, color: Colors.white, size: 32),
+            onPressed: () => Navigator.pop(context),
+          ),
         ),
         title: const Text(
           'MIS OBJETOS',
@@ -77,16 +87,19 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
           ),
         ),
         actions: [
-          Container(
-            margin: const EdgeInsets.only(right: 16),
-            decoration: BoxDecoration(
-              color: AuraColors.green,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: IconButton(
-              icon: const Icon(Icons.add, color: Colors.white, size: 28),
-              tooltip: 'Guardar nuevo objeto',
-              onPressed: _openSaveObject,
+          FocusTraversalOrder(
+            order: const NumericFocusOrder(2),
+            child: Container(
+              margin: const EdgeInsets.only(right: 16),
+              decoration: BoxDecoration(
+                color: AuraColors.green,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: IconButton(
+                icon: const Icon(Icons.add, color: Colors.white, size: 28),
+                tooltip: 'Guardar nuevo objeto',
+                onPressed: _openSaveObject,
+              ),
             ),
           ),
         ],
@@ -96,6 +109,7 @@ class _MyObjectsScreenState extends State<MyObjectsScreen> {
               child: CircularProgressIndicator(color: Colors.white),
             )
           : _buildList(),
+      ),
     );
   }
 

@@ -391,8 +391,11 @@ class _RealSearchScreenState extends State<RealSearchScreen>
       _scanning = false;
       _detected = false;
     });
-    await _audio.stop();
-    if (!mounted) return;
+    // No esperar el stop() antes de navegar: con awaitSpeakCompletion(true)
+    // en tts.dart, si hay una locución larga en curso, stop() puede tardar
+    // varios segundos en resolver — el botón "volver" se sentía trabado.
+    // Fire-and-forget: el audio se corta igual, pero no bloquea el pop.
+    unawaited(_audio.stop());
     Navigator.of(context).pop();
   }
 

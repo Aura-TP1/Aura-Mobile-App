@@ -17,7 +17,6 @@ import '../services/saved_objects_repository.dart';
 import '../services/voice_input_service.dart';
 import '../services/tts.dart';
 import '../theme/aura_colors.dart';
-import 'multi_angle_capture_screen.dart' show MultiAngleCaptureScreen, CaptureAngle;
 
 const Color _kAuraRed = AuraColors.red;
 const double _kMinButtonHeight = kAuraMinButtonHeight;
@@ -145,7 +144,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     setState(() => _isListeningMic = true);
     await _audio.speak('Te escucho.');
     await Future.delayed(const Duration(milliseconds: 250));
-    if (!mounted) { setState(() => _isListeningMic = false); return; }
+    if (!mounted) return;
 
     final text = await _voice.listen();
     if (!mounted) return;
@@ -177,33 +176,45 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
        return;
      }
 
+     // Antes esto se saltaba en silencio si la cámara o el modelo no
+     // estaban listos, y el objeto se guardaba igual con 0 embeddings —
+     // quedaba imposible de encontrar después en una búsqueda, sin que el
+     // usuario supiera por qué. Avisamos y no guardamos en ese caso.
+     if (!kIsWeb && (!_cameraReady || !_modelLoaded)) {
+       final reason =
+           !_cameraReady ? 'la cámara no está lista' : 'el modelo de reconocimiento no cargó';
+       await _audio.speak('No puedo guardar todavía: $reason. Intenta de nuevo en un momento.');
+       if (mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(
+           SnackBar(content: Text('No se pudo guardar: $reason.')),
+         );
+       }
+       return;
+     }
+
      setState(() => _isSaving = true);
 
      try {
        List<ObjectEmbedding> embeddings = [];
 
-       if (!kIsWeb && _cameraReady && _modelLoaded) {
-         // Ir a la pantalla de captura multi-ángulo
-         await _audio.speak('Capturaremos el objeto desde diferentes ángulos para mejor reconocimiento.');
-         await Future.delayed(const Duration(seconds: 1));
-
-         if (!mounted) return;
-         final capturedAngles = await Navigator.push<Map<CaptureAngle, List<double>>>(
-           context,
-           MaterialPageRoute(
-             builder: (_) => MultiAngleCaptureScreen(objectName: name),
-           ),
-         );
-
-         if (capturedAngles != null && capturedAngles.isNotEmpty) {
-           // Convertir los ángulos capturados a ObjectEmbedding
-           embeddings = capturedAngles.entries
-               .map((entry) => ObjectEmbedding.create(
-                     embedding: entry.value,
-                     angleDescription: entry.key.label,
-                   ))
-               .toList();
+       if (!kIsWeb) {
+         // Una sola foto en vez del flujo multi-ángulo: menos pasos para
+         // el usuario, y `_captureEmbedding` ya hace el recorte/embedding
+         // igual que antes.
+         final embedding = await _captureEmbedding();
+         if (embedding.isEmpty) {
+           await _audio.speak('No pude capturar la foto. Intenta de nuevo.');
+           if (mounted) {
+             setState(() => _isSaving = false);
+             ScaffoldMessenger.of(context).showSnackBar(
+               const SnackBar(content: Text('No se pudo capturar la foto. Intenta de nuevo.')),
+             );
+           }
+           return;
          }
+         embeddings = [
+           ObjectEmbedding.create(embedding: embedding, angleDescription: 'frontal'),
+         ];
        }
 
        final obj = SavedObject(
@@ -237,7 +248,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
        }
 
        await _audio.haptic(200); // confirmación háptica
-       await _audio.speak('Guardé $name con ${embeddings.length} ángulos capturados.');
+       await _audio.speak('Guardé $name.');
        if (!mounted) return;
        Navigator.of(context).pop(true);
      } catch (e) {
@@ -513,7 +524,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
      } else if (kIsWeb) {
        label = 'GUARDAR NOMBRE';
      } else {
-       label = 'CAPTURAR DESDE ÁNGULOS';
+       label = 'TOMAR FOTO';
      }
      return SizedBox(
        height: _kMinButtonHeight,

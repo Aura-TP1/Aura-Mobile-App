@@ -120,7 +120,7 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
     }
     await _audio.speak('Te escucho.');
     await Future.delayed(const Duration(milliseconds: 250));
-    if (!mounted) { setState(() => _isListening = false); return; }
+    if (!mounted) return;
 
     final text = await _voice.listen();
     if (!mounted) return;

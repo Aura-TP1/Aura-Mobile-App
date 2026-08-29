@@ -57,16 +57,30 @@ class SttService {
       // diálogo de permisos antes de inicializar el reconocedor.
       await Future.delayed(const Duration(milliseconds: 150));
     }
-    _available = await _speech.initialize(
-      onStatus: _onStatus,
-      onError: _onError,
-      debugLogging: kDebugMode,
-    );
+    try {
+      _available = await _speech.initialize(
+        onStatus: _onStatus,
+        onError: _onError,
+        debugLogging: kDebugMode,
+      );
+    } catch (e) {
+      // El plugin nativo puede lanzar una excepción (MethodChannel roto,
+      // servicio de reconocimiento ausente en el fabricante, etc.) en vez
+      // de simplemente devolver `false` — sin este catch, eso tumbaba toda
+      // la app al tocar cualquier botón de micrófono.
+      debugPrint('SttService.init error: $e');
+      _available = false;
+    }
     if (_available) {
       _permanentlyDenied = false;
       _localeId = await _pickLocale();
     } else {
-      _permanentlyDenied = !(await _speech.hasPermission);
+      try {
+        _permanentlyDenied = !(await _speech.hasPermission);
+      } catch (e) {
+        debugPrint('SttService.hasPermission error: $e');
+        _permanentlyDenied = false;
+      }
     }
     return _available;
   }
@@ -124,7 +138,17 @@ class SttService {
     _lastPartial = '';
     _localeFallbackDone = false;
     _isListening = true;
-    await _listen();
+    try {
+      await _listen();
+    } catch (e) {
+      // Igual que en init(): el plugin nativo puede lanzar en vez de
+      // reportar el error por onError/onStatus. Sin este catch, la
+      // excepción se propagaba sin capturar y crasheaba la app.
+      debugPrint('SttService.startListening error: $e');
+      _isListening = false;
+      _pendingOnResult = null;
+      onResult(null);
+    }
   }
 
   Future<void> _listen() => _speech.listen(
