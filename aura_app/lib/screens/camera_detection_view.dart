@@ -204,6 +204,14 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
 
     try {
       await controller.initialize();
+      // Sin esto, algunos dispositivos Android activan el flash automático
+      // de la cámara nativa en poca luz al usar takePicture() (modo OCR) —
+      // el plugin no fija FlashMode explícitamente por defecto.
+      try {
+        await controller.setFlashMode(FlashMode.off);
+      } catch (e) {
+        debugPrint('No se pudo forzar flash apagado: $e');
+      }
       if (!mounted) return;
       setState(() {
         _isInitialized = true;
@@ -666,7 +674,9 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
               _buildCameraPreview()
             else
               _buildPlaceholder(),
-            if (_isInitialized && _detections.isNotEmpty) _buildDetectionOverlay(),
+            // Los bounding boxes se quitaron: aparecían desalineados sobre
+            // la imagen real y no aportaban a un usuario con baja visión —
+            // la detección se sigue anunciando por voz y en el badge.
             if (_streamActive && _mode == CamMode.yolo && _lastFrameMs > 0)
               _buildPerfOverlay(),
             _buildTopBar(),
@@ -720,19 +730,6 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildDetectionOverlay() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return IgnorePointer(
-          child: CustomPaint(
-            size: Size(constraints.maxWidth, constraints.maxHeight),
-            painter: _DetectionPainter(detections: _detections),
-          ),
-        );
-      },
     );
   }
 
@@ -790,7 +787,7 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
             IconButton(
               tooltip: 'Volver',
               constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-              icon: const Icon(Icons.arrow_back, color: Colors.white),
+              icon: const Icon(Icons.arrow_back, color: Colors.white, size: 32),
               onPressed: () => Navigator.of(context).maybePop(),
             ),
             const SizedBox(width: 4),
@@ -807,39 +804,21 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
               ),
             ),
             const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-              decoration: BoxDecoration(
-                color: _streamActive
-                    ? Colors.green.withOpacity(0.85)
-                    : Colors.white.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_streamActive)
-                    Container(
-                      width: 7,
-                      height: 7,
-                      margin: const EdgeInsets.only(right: 6),
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  Text(
-                    _streamActive ? 'EN VIVO' : 'PAUSADO',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 1.5,
-                    ),
+            // Antes decía "EN VIVO"/"PAUSADO" en texto; ahora es solo un
+            // punto de color (verde = detectando, rojo = en pausa), oculto
+            // del todo si la cámara ni siquiera está lista todavía.
+            if (_isInitialized)
+              Semantics(
+                label: _streamActive ? 'Detectando' : 'En pausa',
+                child: Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _streamActive ? Colors.green : Colors.red,
                   ),
-                ],
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -885,8 +864,8 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
                   onTap: _streamActive ? _stopDetection : _startDetection,
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
-                    width: 72,
-                    height: 72,
+                    width: 84,
+                    height: 84,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: _streamActive ? Colors.red : Colors.white,
@@ -899,10 +878,16 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
                         ),
                       ],
                     ),
-                    child: Icon(
-                      _streamActive ? Icons.stop_rounded : Icons.play_arrow_rounded,
-                      color: _streamActive ? Colors.white : Colors.black,
-                      size: 36,
+                    // ExcludeSemantics: sin esto, este Icon puede generar su
+                    // propio nodo de accesibilidad (sin texto) que compite
+                    // con el label del Semantics padre — TalkBack terminaba
+                    // sin leer nada útil en este botón.
+                    child: ExcludeSemantics(
+                      child: Icon(
+                        _streamActive ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                        color: _streamActive ? Colors.white : Colors.black,
+                        size: 44,
+                      ),
                     ),
                   ),
                 ),
@@ -910,14 +895,20 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
             ],
           ),
           const SizedBox(height: 12),
-          Text(
-            _statusMessage,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.6),
-              fontSize: 12,
+          // Antes mostraba SIEMPRE el estado ("Modelo listo. Presiona ▶
+          // para detectar.", "Detectando...", etc.) — puro ruido visual,
+          // repite lo que ya se anuncia por voz. Solo vale la pena
+          // mostrarlo cuando es un error real (algo que el usuario
+          // necesita saber y que no tiene otro aviso).
+          if (_statusMessage.toLowerCase().contains('error'))
+            Text(
+              _statusMessage,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.6),
+                fontSize: 12,
+              ),
+              textAlign: TextAlign.center,
             ),
-            textAlign: TextAlign.center,
-          ),
         ],
       ),
     );
@@ -959,7 +950,10 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
   Widget _buildDetectionBadge(Detection d) {
     final pct = (d.confidence * 100).toStringAsFixed(0);
     return Semantics(
-      label: 'Detectado: ${d.label}, confianza $pct%',
+      // Sin el porcentaje: TalkBack lo anunciaba cada vez que cambiaba la
+      // detección ("... confianza 45%"), que no aporta al usuario y se
+      // sentía como que "el micrófono" hablaba solo de porcentajes.
+      label: 'Detectado: ${d.label}',
       liveRegion: true,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -1021,29 +1015,34 @@ class _IconButton extends StatelessWidget {
       onTap: onTap,
       child: GestureDetector(
         onTap: onTap,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 50,
-              height: 50,
-              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: active
-                    ? Colors.white.withOpacity(0.15)
-                    : Colors.white.withOpacity(0.05),
+        // El label ya está en el Semantics padre — sin ExcludeSemantics,
+        // el Icon y el Text de abajo generan sus propios nodos y pueden
+        // hacer que TalkBack no lea el label correcto o lo repita.
+        child: ExcludeSemantics(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: active
+                      ? Colors.white.withOpacity(0.15)
+                      : Colors.white.withOpacity(0.05),
+                ),
+                child: Icon(icon,
+                    color: active ? Colors.white : Colors.white30, size: 28),
               ),
-              child: Icon(icon,
-                  color: active ? Colors.white : Colors.white30, size: 22),
-            ),
-            const SizedBox(height: 4),
-            Text(label,
-                style: TextStyle(
-                  color: active ? Colors.white60 : Colors.white24,
-                  fontSize: 10,
-                )),
-          ],
+              const SizedBox(height: 4),
+              Text(label,
+                  style: TextStyle(
+                    color: active ? Colors.white60 : Colors.white24,
+                    fontSize: 10,
+                  )),
+            ],
+          ),
         ),
       ),
     );
@@ -1053,56 +1052,6 @@ class _IconButton extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────
 // Painter: dibuja bounding boxes sobre el preview.
 // ─────────────────────────────────────────────────────────────────────────
-class _DetectionPainter extends CustomPainter {
-  final List<Detection> detections;
-
-  _DetectionPainter({required this.detections});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final boxPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5
-      ..color = Colors.greenAccent;
-
-    final bgPaint = Paint()
-      ..style = PaintingStyle.fill
-      ..color = Colors.greenAccent.withOpacity(0.15);
-
-    for (final d in detections) {
-      // d.rect está en coordenadas normalizadas [0..1].
-      final rect = Rect.fromLTWH(
-        d.rect.left * size.width,
-        d.rect.top * size.height,
-        d.rect.width * size.width,
-        d.rect.height * size.height,
-      );
-
-      canvas.drawRect(rect, bgPaint);
-      canvas.drawRect(rect, boxPaint);
-
-      final tp = TextPainter(
-        text: TextSpan(
-          text: ' ${d.label} ${(d.confidence * 100).toStringAsFixed(0)}% ',
-          style: const TextStyle(
-            color: Colors.black,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            backgroundColor: Colors.greenAccent,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-
-      tp.paint(canvas, Offset(rect.left, rect.top - 18));
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _DetectionPainter old) =>
-      old.detections != detections;
-}
-
 /// Datos de entrada para la conversión YUV420→RGB en isolate. Todos los
 /// campos son tipos "sendable" (primitivos + Uint8List) para poder cruzar
 /// el límite del isolate sin copias implícitas costosas.
