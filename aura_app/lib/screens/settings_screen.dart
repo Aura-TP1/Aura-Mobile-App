@@ -43,6 +43,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isSyncing = false;
   String? _syncStatusMessage;
   List<MetricsFileInfo>? _metricsInfo;
+  List<File>? _cropImages;
   bool _isClearingMetrics = false;
 
   @override
@@ -66,11 +67,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _audio.init();
     _checkAuthStatus();
     _loadMetricsInfo();
+    _loadCropImages();
   }
 
   Future<void> _loadMetricsInfo() async {
     final info = await MetricsLogger.instance.listMetricsFiles();
     if (mounted) setState(() => _metricsInfo = info);
+  }
+
+  Future<void> _loadCropImages() async {
+    final images = await MetricsLogger.instance.listCropDebugImages();
+    if (mounted) setState(() => _cropImages = images);
   }
 
   Future<void> _shareMetrics() async {
@@ -176,6 +183,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               setState(() => _isClearingMetrics = true);
               await MetricsLogger.instance.deleteAllMetrics();
               await _loadMetricsInfo();
+              await _loadCropImages();
               if (mounted) {
                 setState(() => _isClearingMetrics = false);
                 await _audio.speak('Métricas borradas.');
@@ -842,6 +850,88 @@ class _SettingsScreenState extends State<SettingsScreen> {
               minimumSize: const Size(double.infinity, 44),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
+          ),
+          const SizedBox(height: 20),
+          const Text(
+            'Recortes recientes',
+            style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Lo que realmente se recortó al guardar cada objeto — para '
+            'confirmar a simple vista si agarró el objeto correcto o algo '
+            'de fondo.',
+            style: TextStyle(color: Colors.white38, fontSize: 12),
+          ),
+          const SizedBox(height: 10),
+          _buildCropImagesGrid(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCropImagesGrid() {
+    final images = _cropImages;
+    if (images == null) {
+      return const Text('Cargando...', style: TextStyle(color: Colors.white54));
+    }
+    if (images.isEmpty) {
+      return const Text(
+        'Todavía no hay recortes guardados — se guardan al guardar un objeto.',
+        style: TextStyle(color: Colors.white38, fontSize: 12),
+      );
+    }
+    return SizedBox(
+      height: 84,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: images.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final file = images[index];
+          return Semantics(
+            button: true,
+            label: 'Ver recorte ${index + 1}',
+            onTap: () => _showCropImage(file),
+            child: GestureDetector(
+              onTap: () => _showCropImage(file),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.file(
+                  file,
+                  width: 84,
+                  height: 84,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stack) => Container(
+                    width: 84,
+                    height: 84,
+                    color: Colors.white10,
+                    child: const Icon(Icons.broken_image, color: Colors.white38),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _showCropImage(File file) {
+    final name = file.uri.pathSegments.last;
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1e1e1e),
+        title: Text(name, style: const TextStyle(color: Colors.white, fontSize: 13)),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Image.file(file, fit: BoxFit.contain),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar', style: TextStyle(color: Colors.white70)),
           ),
         ],
       ),

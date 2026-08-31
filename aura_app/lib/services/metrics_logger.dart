@@ -287,8 +287,9 @@ class MetricsLogger {
     return lines.sublist(start).reversed.toList();
   }
 
-  /// Borra los 3 archivos de métricas (los que existan). Pensado para
-  /// arrancar una tanda de pruebas de campo desde cero.
+  /// Borra los 3 archivos de métricas y los recortes de depuración
+  /// guardados. Pensado para arrancar una tanda de pruebas de campo desde
+  /// cero.
   Future<void> deleteAllMetrics() async {
     final dir = await _getMetricsDir();
     for (final name in _allFileNames) {
@@ -301,6 +302,77 @@ class MetricsLogger {
         }
       }
     }
+    try {
+      final cropsDir = await _getCropsDir();
+      for (final entity in await cropsDir.list().toList()) {
+        if (entity is File) {
+          try {
+            await entity.delete();
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      debugPrint('MetricsLogger: error borrando recortes: $e');
+    }
+  }
+
+  // ── Recortes de depuración (visor "Recortes recientes" en Ajustes) ─────
+  // Antes solo se logueaba metadata (clase, confianza) del recorte elegido
+  // — no había forma de ver la imagen real. Esto guarda el recorte que
+  // efectivamente se usó para extraer el embedding, para poder confirmar
+  // a simple vista si agarró el objeto correcto o algo de fondo (caso real
+  // que motivó esto: una pastilla sobre un teclado, donde YOLO recortaba
+  // el teclado en vez de la pastilla).
+
+  static const int _maxCropDebugImages = 20;
+
+  Future<Directory> _getCropsDir() async {
+    final dir = await _getMetricsDir();
+    final cropsDir = Directory('${dir.path}/crops');
+    if (!await cropsDir.exists()) {
+      await cropsDir.create(recursive: true);
+    }
+    return cropsDir;
+  }
+
+  /// Guarda [jpegBytes] (ya codificados como JPEG) como el recorte de
+  /// depuración más reciente. Mantiene como máximo [_maxCropDebugImages],
+  /// borrando los más viejos, para no llenar el almacenamiento del
+  /// celular con esto.
+  Future<void> saveCropDebugImage(
+    List<int> jpegBytes, {
+    required String objectLabel,
+    required String cropMethod,
+  }) async {
+    try {
+      final cropsDir = await _getCropsDir();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final safeLabel = objectLabel.trim().isEmpty
+          ? 'objeto'
+          : objectLabel.replaceAll(RegExp(r'[^a-zA-Z0-9_\-áéíóúÁÉÍÓÚñÑ ]'), '_');
+      final file = File('${cropsDir.path}/${timestamp}_${safeLabel}_$cropMethod.jpg');
+      await file.writeAsBytes(jpegBytes);
+
+      final files = (await cropsDir.list().toList()).whereType<File>().toList()
+        ..sort((a, b) => a.path.compareTo(b.path)); // el timestamp al inicio del nombre ordena cronológicamente
+      if (files.length > _maxCropDebugImages) {
+        for (final f in files.take(files.length - _maxCropDebugImages)) {
+          try {
+            await f.delete();
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      debugPrint('MetricsLogger: error guardando recorte de depuración: $e');
+    }
+  }
+
+  /// Recortes de depuración guardados, más reciente primero.
+  Future<List<File>> listCropDebugImages() async {
+    final cropsDir = await _getCropsDir();
+    final files = (await cropsDir.list().toList()).whereType<File>().toList()
+      ..sort((a, b) => b.path.compareTo(a.path));
+    return files;
   }
 }
 

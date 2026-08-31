@@ -349,6 +349,18 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         discardedBoxHeight: discardedBoxHeight,
       );
 
+      // Guardar el recorte real (antes de normalizar) para el visor
+      // "Recortes recientes" de Ajustes — antes solo había metadata en
+      // crop_metrics.jsonl, no la imagen, así que no había forma de
+      // confirmar a simple vista si el recorte agarró el objeto correcto.
+      // Fire-and-forget: no debe retrasar el guardado.
+      // ignore: discarded_futures
+      MetricsLogger.instance.saveCropDebugImage(
+        img.encodeJpg(toEmbed, quality: 85),
+        objectLabel: _nameController.text.trim(),
+        cropMethod: cropMethod,
+      );
+
       // Normalizar brillo/contraste antes de generar las variantes: que
       // la luz del momento de guardar pese menos al comparar contra la
       // luz del momento de buscar (ver detection_crop.dart).

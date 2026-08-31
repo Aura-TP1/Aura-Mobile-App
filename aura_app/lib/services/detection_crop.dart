@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:image/image.dart' as img;
 
 import 'object_detector.dart' show Detection;
@@ -121,13 +123,57 @@ const double kMinCropBoxFraction = 0.05;
 /// [kMinCropBoxFraction] se ignora, porque recortar sobre ella produce un
 /// crop de pocos píxeles (ruido, no el objeto) antes de reescalarlo para
 /// el embedding.
+///
+/// Entre los candidatos que pasan ese filtro, NO se elige por confianza
+/// pura — se usa [_cropScore], que además premia estar centrado y penaliza
+/// cajas muy grandes. Motivo (confirmado con datos reales de campo): al
+/// guardar una pastilla apoyada sobre un teclado, YOLO detectaba el
+/// teclado (clase COCO real, bien entrenada, alta confianza) en vez de la
+/// pastilla (sin clase COCO, confianza siempre baja) — con selección por
+/// confianza pura, el teclado le ganaba a la pastilla y el embedding
+/// terminaba representando el objeto de fondo, no el que el usuario
+/// sostenía frente a la cámara. Un objeto de fondo/mobiliario (mesa,
+/// teclado, silla) suele ocupar una fracción grande del encuadre y no
+/// tiene por qué estar centrado; el objeto que alguien sostiene para
+/// guardarlo/buscarlo, sí.
 Detection? bestCropCandidate(List<Detection> detections) {
   final candidates = detections.where(
     (d) => d.rect.width >= kMinCropBoxFraction && d.rect.height >= kMinCropBoxFraction,
   );
   Detection? best;
+  double bestScore = -1;
   for (final d in candidates) {
-    if (best == null || d.confidence > best.confidence) best = d;
+    final score = _cropScore(d);
+    if (score > bestScore) {
+      bestScore = score;
+      best = d;
+    }
   }
   return best;
+}
+
+/// Combina confianza, qué tan centrada está la caja, y un castigo a cajas
+/// que ocupan una fracción muy grande del frame. Todos los factores son
+/// heurísticas, no certezas — el objetivo es dejar de tratar la confianza
+/// de YOLO como la única señal válida quando hay un objeto COCO de fondo
+/// compitiendo con el objeto real (no-COCO) que el usuario quiere.
+double _cropScore(Detection d) {
+  final cx = d.rect.left + d.rect.width / 2;
+  final cy = d.rect.top + d.rect.height / 2;
+  final centerDist = math.sqrt((cx - 0.5) * (cx - 0.5) + (cy - 0.5) * (cy - 0.5));
+  // 1.0 si está perfectamente centrada, 0.0 si el centro de la caja está a
+  // 0.5 (mitad del frame) o más lejos del centro.
+  final centeredness = (1.0 - (centerDist / 0.5)).clamp(0.0, 1.0);
+
+  // Cajas que ocupan más del 60% del ancho/alto del frame (una mesa, un
+  // teclado de cerca) pierden hasta el 80% de su puntaje; por debajo de
+  // eso no hay penalidad.
+  final maxDim = math.max(d.rect.width, d.rect.height);
+  final sizePenalty = maxDim <= 0.6
+      ? 1.0
+      : (1.0 - ((maxDim - 0.6) / 0.4)).clamp(0.2, 1.0);
+
+  // La confianza sigue pesando (40% del puntaje incluso con centrado
+  // perfecto), pero ya no decide sola.
+  return d.confidence * (0.4 + 0.6 * centeredness) * sizePenalty;
 }
