@@ -1,10 +1,13 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 import '../models/saved_object.dart';
 import '../services/app_settings.dart';
 import '../services/backend_service.dart';
 import '../services/google_auth_service.dart';
+import '../services/metrics_logger.dart';
 import '../services/saved_objects_repository.dart';
 import '../services/tts.dart';
 
@@ -39,6 +42,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _userEmail;
   bool _isSyncing = false;
   String? _syncStatusMessage;
+  List<MetricsFileInfo>? _metricsInfo;
+  bool _isClearingMetrics = false;
 
   @override
   void initState() {
@@ -60,6 +65,70 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _useEmbeddingInt8 = AppSettings.instance.useEmbeddingInt8;
     _audio.init();
     _checkAuthStatus();
+    _loadMetricsInfo();
+  }
+
+  Future<void> _loadMetricsInfo() async {
+    final info = await MetricsLogger.instance.listMetricsFiles();
+    if (mounted) setState(() => _metricsInfo = info);
+  }
+
+  Future<void> _shareMetrics() async {
+    final paths = await MetricsLogger.instance.allFilePaths();
+    final existing = <XFile>[];
+    for (final p in paths) {
+      final f = File(p);
+      if (await f.exists() && await f.length() > 0) {
+        existing.add(XFile(p));
+      }
+    }
+    if (existing.isEmpty) {
+      await _audio.speak('Todavía no hay métricas guardadas para compartir.');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Todavía no hay métricas guardadas.')),
+        );
+      }
+      return;
+    }
+    await Share.shareXFiles(existing, text: 'Métricas de AURA');
+  }
+
+  void _confirmClearMetrics() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1e1e1e),
+        title: const Text('Borrar métricas', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Esto borra los 3 archivos de métricas guardados en este celular. '
+          'No se puede deshacer — si querés conservarlos, compartilos primero.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              setState(() => _isClearingMetrics = true);
+              await MetricsLogger.instance.deleteAllMetrics();
+              await _loadMetricsInfo();
+              if (mounted) {
+                setState(() => _isClearingMetrics = false);
+                await _audio.speak('Métricas borradas.');
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Métricas borradas.')),
+                );
+              }
+            },
+            child: const Text('Borrar', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _checkAuthStatus() async {
@@ -203,6 +272,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _buildCameraSection(),
               const SizedBox(height: 24),
               _buildAdvancedSection(),
+              const SizedBox(height: 24),
+              _buildMetricsSection(),
               const SizedBox(height: 40),
             ],
           ),
@@ -618,6 +689,90 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  /// Sección "Métricas": antes la única forma de ver los .jsonl era
+  /// conectar el celular por cable y leerlos a mano (ADB) — ahora se
+  /// pueden compartir (share sheet nativo) o borrar directamente desde acá.
+  Widget _buildMetricsSection() {
+    final info = _metricsInfo;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.query_stats, color: Colors.white70, size: 20),
+              SizedBox(width: 8),
+              Text(
+                'MÉTRICAS',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white.withOpacity(0.1)),
+            ),
+            child: info == null
+                ? const Text('Cargando...', style: TextStyle(color: Colors.white54))
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      for (final f in info)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            '${f.fileName}: ${f.lineCount} registros',
+                            style: const TextStyle(color: Colors.white70, fontSize: 13),
+                          ),
+                        ),
+                    ],
+                  ),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _shareMetrics,
+            icon: const Icon(Icons.share, size: 18, color: Colors.white70),
+            label: const Text('Compartir métricas', style: TextStyle(color: Colors.white70)),
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: Colors.white.withOpacity(0.2)),
+              minimumSize: const Size(double.infinity, 44),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: _isClearingMetrics ? null : _confirmClearMetrics,
+            icon: _isClearingMetrics
+                ? const SizedBox(
+                    width: 14, height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.redAccent))
+                : const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
+            label: Text(
+              _isClearingMetrics ? 'Borrando...' : 'Borrar métricas',
+              style: const TextStyle(color: Colors.redAccent),
+            ),
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: Colors.redAccent),
+              minimumSize: const Size(double.infinity, 44),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

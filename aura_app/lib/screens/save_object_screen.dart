@@ -210,10 +210,10 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
 
        if (!kIsWeb) {
          // Una sola foto en vez del flujo multi-ángulo: menos pasos para
-         // el usuario, y `_captureEmbedding` ya hace el recorte/embedding
-         // igual que antes.
-         final embedding = await _captureEmbedding();
-         if (embedding.isEmpty) {
+         // el usuario. _captureEmbedding ya devuelve varios ObjectEmbedding
+         // (original + rotaciones + espejo) generados de esa única foto.
+         embeddings = await _captureEmbedding();
+         if (embeddings.isEmpty) {
            await _audio.speak('No pude capturar la foto. Intenta de nuevo.');
            if (mounted) {
              setState(() => _isSaving = false);
@@ -223,9 +223,6 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
            }
            return;
          }
-         embeddings = [
-           ObjectEmbedding.create(embedding: embedding, angleDescription: 'frontal'),
-         ];
        }
 
        final obj = SavedObject(
@@ -275,9 +272,19 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
      }
    }
 
-  /// Captura una sola foto y extrae su embedding. Sin pedir reposicionar la
-  /// cámara: más simple y digno para un usuario con baja visión.
-  Future<List<double>> _captureEmbedding() async {
+  /// Captura una sola foto y extrae VARIOS embeddings de ella (original +
+  /// rotaciones 90/180/270 + espejo horizontal), en vez de pedirle al
+  /// usuario más fotos desde distintos ángulos.
+  ///
+  /// MobileNetV2 no es invariante a rotación: un objeto guardado de frente
+  /// y buscado girado 90° puede dar una similitud coseno muy por debajo
+  /// del umbral de match (0.75) aunque sea el mismo objeto — confirmado en
+  /// campo con una pastilla que no se reconocía tras girarla. La búsqueda
+  /// (`embedding_service_common.dart` → `findBestMatch`, y también
+  /// `real_search_screen.dart`) ya compara contra TODOS los embeddings de
+  /// un objeto y toma el máximo, así que agregar estas variantes sintéticas
+  /// aquí no requiere ningún cambio del lado de la búsqueda.
+  Future<List<ObjectEmbedding>> _captureEmbedding() async {
     await _audio.speak('Mantén firme. Capturando.');
     await Future.delayed(const Duration(milliseconds: 400));
     if (!_cameraReady || _camera == null) return const [];
@@ -342,7 +349,24 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         discardedBoxHeight: discardedBoxHeight,
       );
 
-      return await _embeddings.extractEmbedding(toEmbed);
+      // Variantes sintéticas de la MISMA foto ya recortada — sin tomar
+      // fotos nuevas ni pedirle nada más al usuario.
+      final variants = <String, img.Image>{
+        'original': toEmbed,
+        'rot90': img.copyRotate(toEmbed, angle: 90),
+        'rot180': img.copyRotate(toEmbed, angle: 180),
+        'rot270': img.copyRotate(toEmbed, angle: 270),
+        'flip': img.flipHorizontal(toEmbed),
+      };
+
+      final results = <ObjectEmbedding>[];
+      for (final entry in variants.entries) {
+        final emb = await _embeddings.extractEmbedding(entry.value);
+        if (emb.isNotEmpty) {
+          results.add(ObjectEmbedding.create(embedding: emb, angleDescription: entry.key));
+        }
+      }
+      return results;
     } catch (e) {
       debugPrint('Error capturando foto: $e');
       return const [];

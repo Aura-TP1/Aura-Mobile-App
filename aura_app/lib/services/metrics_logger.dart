@@ -222,4 +222,82 @@ class MetricsLogger {
       return '';
     }
   }
+
+  // ── Lectura/borrado (para el visor de métricas en Ajustes) ─────────────
+  // Todo lo de arriba solo escribe — hasta ahora la única forma de ver
+  // estos archivos era conectar el celular por cable y leerlos a mano.
+
+  static const List<String> _allFileNames = [
+    _detectionFileName,
+    _searchFileName,
+    _cropFileName,
+  ];
+
+  /// Nombre, tamaño en bytes y cantidad de líneas (registros) de cada
+  /// archivo de métricas. Archivos que aún no existen (nada logueado todavía)
+  /// aparecen con 0 líneas y 0 bytes, no se omiten.
+  Future<List<MetricsFileInfo>> listMetricsFiles() async {
+    final dir = await _getMetricsDir();
+    final result = <MetricsFileInfo>[];
+    for (final name in _allFileNames) {
+      final file = File('${dir.path}/$name');
+      if (!await file.exists()) {
+        result.add(MetricsFileInfo(fileName: name, sizeBytes: 0, lineCount: 0));
+        continue;
+      }
+      final stat = await file.stat();
+      // Contar líneas no vacías en vez de asumir que cada '\n' es un
+      // registro completo, por si la última línea quedó sin el '\n' final.
+      final lines = (await file.readAsLines())
+          .where((l) => l.trim().isNotEmpty)
+          .length;
+      result.add(MetricsFileInfo(
+        fileName: name,
+        sizeBytes: stat.size,
+        lineCount: lines,
+      ));
+    }
+    return result;
+  }
+
+  /// Ruta absoluta de un archivo de métricas (para compartirlo por
+  /// `share_plus`). No garantiza que el archivo exista.
+  Future<String> filePathFor(String fileName) async {
+    final dir = await _getMetricsDir();
+    return '${dir.path}/$fileName';
+  }
+
+  Future<List<String>> allFilePaths() async {
+    final dir = await _getMetricsDir();
+    return _allFileNames.map((n) => '${dir.path}/$n').toList();
+  }
+
+  /// Borra los 3 archivos de métricas (los que existan). Pensado para
+  /// arrancar una tanda de pruebas de campo desde cero.
+  Future<void> deleteAllMetrics() async {
+    final dir = await _getMetricsDir();
+    for (final name in _allFileNames) {
+      final file = File('${dir.path}/$name');
+      if (await file.exists()) {
+        try {
+          await file.delete();
+        } catch (e) {
+          debugPrint('MetricsLogger: error borrando $name: $e');
+        }
+      }
+    }
+  }
+}
+
+/// Resumen de un archivo de métricas, para mostrar en el visor de Ajustes.
+class MetricsFileInfo {
+  final String fileName;
+  final int sizeBytes;
+  final int lineCount;
+
+  const MetricsFileInfo({
+    required this.fileName,
+    required this.sizeBytes,
+    required this.lineCount,
+  });
 }

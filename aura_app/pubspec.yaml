@@ -46,6 +46,10 @@ dependencies:
   # Vibración
   vibration: ^2.0.0
 
+  # Compartir archivos (visor de métricas en Ajustes) vía el share sheet
+  # nativo — email, WhatsApp, Drive, guardar en Archivos, etc.
+  share_plus: ^10.1.2
+
   # Autenticación Google
   google_sign_in: ^6.2.0
   googleapis_auth: ^1.4.1
