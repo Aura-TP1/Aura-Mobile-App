@@ -22,6 +22,12 @@ import '../theme/aura_colors.dart';
 const Color _kAuraRed = AuraColors.red;
 const double _kMinButtonHeight = kAuraMinButtonHeight;
 
+/// Fracción del encuadre (ancho y alto) que cubre el marco guía mostrado
+/// al usuario al guardar un objeto. El recorte final usa EXACTAMENTE esta
+/// misma fracción (ver `_captureEmbedding`) — lo que se ve en pantalla es
+/// lo que se recorta, sin depender de que YOLO reconozca el objeto.
+const double kGuideFrameFraction = 0.6;
+
 /// Pantalla para guardar un objeto personal.
 ///
 /// En native: usa la cámara, captura una foto y extrae el embedding con
@@ -95,7 +101,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     // nada.
     unawaited(_audio.speak(kIsWeb
         ? 'Guardar objeto. Escribe o dicta el nombre.'
-        : 'Apunta la cámara al objeto y di o escribe el nombre.'));
+        : 'Apunta la cámara al objeto, colócalo dentro del marco, y di o escribe el nombre.'));
     if (!kIsWeb) {
       await Future.wait([
         _initCamera(),
@@ -294,46 +300,43 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       final decoded = img.decodeImage(bytes);
       if (decoded == null) return const [];
 
-      // Recortar antes de extraer el embedding, en vez de pasar el frame
-      // completo: el embedding debe representar el objeto, no la escena que
-      // lo rodea. Usa kCropConfThreshold (bajo, solo localización) — varios
-      // objetos de prueba (llaves, pastillas, lentes) no son clases COCO y
-      // casi nunca cruzan el umbral de detección en vivo (0.4). Si ni con
-      // el umbral bajo hay nada, recorte central en vez de imagen entera.
-      var toEmbed = decoded;
-      String cropMethod;
+      // Recorte determinístico al marco guía que se le mostró al usuario
+      // en pantalla (ver _buildCameraArea, kGuideFrameFraction) — YA NO
+      // depende de que YOLO reconozca el objeto para elegir la región.
+      //
+      // Antes se usaba la detección de YOLO de mayor puntaje para elegir
+      // el recorte. Eso falló dos veces con datos reales de campo: al
+      // guardar una pastilla (sin clase COCO, confianza siempre baja),
+      // YOLO se quedó con un objeto de fondo que SÍ tiene clase COCO
+      // (primero "teclado", después "laptop") y el embedding terminó
+      // representando el objeto equivocado. Ajustar el puntaje de
+      // selección (confianza + centrado + tamaño) no alcanzó — es un
+      // problema de arquitectura: YOLO es un clasificador de 80 categorías
+      // fijas, no un detector de objetos genéricos, así que cualquier
+      // heurística sobre su salida sigue perdiendo contra el próximo
+      // objeto COCO real que aparezca en el encuadre.
+      //
+      // El marco guía elimina ese modo de falla: el usuario controla qué
+      // entra al recorte (se le indica por voz y se le muestra en
+      // pantalla), no un clasificador.
+      var toEmbed = centerCrop(decoded, fraction: kGuideFrameFraction);
+      const cropMethod = 'guide_frame';
+
+      // YOLO se sigue corriendo, pero solo con fines informativos/de
+      // métricas (para saber qué "cree" ver ahí y poder comparar contra
+      // el nombre real que puso el usuario) — ya no decide el recorte.
       int? cropClassId;
       String? cropLabel;
       double? cropConfidence;
-      String? cropFallbackReason;
-      double? discardedBoxWidth;
-      double? discardedBoxHeight;
       if (_detector.isLoaded) {
         final detections =
             await _detector.detect(decoded, confThreshold: kCropConfThreshold);
         final best = bestCropCandidate(detections);
         if (best != null) {
-          toEmbed = cropToDetection(decoded, best);
-          cropMethod = 'yolo_detection';
           cropClassId = cocoLabels.indexOf(best.label);
           cropLabel = best.label;
           cropConfidence = best.confidence;
-        } else {
-          toEmbed = centerCrop(decoded);
-          cropMethod = 'center_crop_fallback';
-          if (detections.isEmpty) {
-            cropFallbackReason = 'no_detection';
-          } else {
-            cropFallbackReason = 'box_too_small';
-            final discarded = highestConfidence(detections);
-            discardedBoxWidth = discarded?.rect.width;
-            discardedBoxHeight = discarded?.rect.height;
-          }
-          debugPrint('[save_object] Sin detección ≥$kCropConfThreshold; usando center-crop como fallback ($cropFallbackReason).');
         }
-      } else {
-        cropMethod = 'full_frame_no_model';
-        debugPrint('[save_object] Detector YOLO no cargado; usando imagen completa como fallback.');
       }
 
       // ignore: discarded_futures
@@ -344,9 +347,6 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         detectionClassId: cropClassId,
         detectionLabel: cropLabel,
         detectionConfidence: cropConfidence,
-        cropFallbackReason: cropFallbackReason,
-        discardedBoxWidth: discardedBoxWidth,
-        discardedBoxHeight: discardedBoxHeight,
       );
 
       // Guardar el recorte real (antes de normalizar) para el visor
@@ -465,7 +465,37 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       aspectRatio: _camera!.value.aspectRatio,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
-        child: CameraPreview(_camera!),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            CameraPreview(_camera!),
+            // Marco guía: el recorte que se guarda es EXACTAMENTE esta
+            // región (ver kGuideFrameFraction en _captureEmbedding) — así
+            // el usuario controla qué entra al recorte, en vez de
+            // depender de que YOLO reconozca el objeto correctamente.
+            // Antes, cuando había otro objeto reconocible (COCO) cerca
+            // del objeto real, YOLO se quedaba con el objeto equivocado
+            // (confirmado con datos reales: eligió "teclado" y luego
+            // "laptop" en vez de la pastilla que se quería guardar).
+            IgnorePointer(
+              child: Center(
+                child: FractionallySizedBox(
+                  widthFactor: kGuideFrameFraction,
+                  heightFactor: kGuideFrameFraction,
+                  child: Semantics(
+                    label: 'Marco guía: coloca el objeto dentro de este recuadro',
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white, width: 3),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
