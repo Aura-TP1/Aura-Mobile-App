@@ -320,7 +320,21 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       // entra al recorte (se le indica por voz y se le muestra en
       // pantalla), no un clasificador.
       var toEmbed = centerCrop(decoded, fraction: kGuideFrameFraction);
-      const cropMethod = 'guide_frame';
+      var cropMethod = 'guide_frame';
+
+      // Sobre el recorte del marco guía, intentar ceñir aún más al objeto
+      // con segmentación de primer plano sin clases (watershed): el marco
+      // guía ya excluye el fondo lejano, pero dentro de ese 60% todavía
+      // puede haber fondo (teclado, mesa) alrededor del objeto real. El
+      // watershed no reconoce clases — solo separa por bordes/contraste —
+      // así que no puede "confundir" el objeto con mobiliario cercano como
+      // hacía YOLO. Si el resultado no es confiable, se conserva el
+      // recorte del marco guía sin modificar (ver segmentForeground).
+      final segmented = segmentForeground(toEmbed);
+      if (segmented != null) {
+        toEmbed = segmented;
+        cropMethod = 'watershed_segmentation';
+      }
 
       // YOLO se sigue corriendo, pero solo con fines informativos/de
       // métricas (para saber qué "cree" ver ahí y poder comparar contra

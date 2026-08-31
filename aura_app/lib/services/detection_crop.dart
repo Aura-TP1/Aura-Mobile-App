@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
 
@@ -176,4 +177,208 @@ double _cropScore(Detection d) {
   // La confianza sigue pesando (40% del puntaje incluso con centrado
   // perfecto), pero ya no decide sola.
   return d.confidence * (0.4 + 0.6 * centeredness) * sizePenalty;
+}
+
+/// Segmentación de primer plano SIN clases (watershed marcado): separa el
+/// objeto del fondo usando solo bordes/contraste, no reconocimiento. A
+/// diferencia de YOLO, no le importa si lo que está alrededor es una clase
+/// COCO real (teclado, laptop) o no — solo mira dónde cambia bruscamente la
+/// intensidad de la imagen.
+///
+/// Algoritmo (watershed por inmersión, marcado con semillas):
+/// 1. Se reduce [image] a un tamaño de trabajo pequeño ([workSize]) para que
+///    sea rápido en el teléfono.
+/// 2. Se calcula el gradiente de Sobel en escala de grises: actúa como un
+///    mapa de "elevación" donde los bordes del objeto son crestas altas.
+/// 3. Se siembran dos marcadores: el centro de la imagen (primer plano —
+///    ahí es donde el usuario coloca el objeto dentro del marco guía) y un
+///    anillo de 2px en el borde (fondo).
+/// 4. Se inunda desde ambas semillas por orden de elevación creciente (cola
+///    de prioridad de 256 buckets, uno por nivel de gradiente) — cada
+///    píxel se asigna a la semilla que lo alcanza primero, respetando las
+///    crestas de alto gradiente como límites naturales entre regiones.
+/// 5. Se calcula el bounding box de la región de primer plano resultante y
+///    se recorta [image] (en su resolución original) a esa caja, con
+///    padding.
+///
+/// Devuelve `null` si el resultado no es confiable (máscara vacía, o el
+/// primer plano ocupa <2% o >85% del cuadro de trabajo) — en ese caso el
+/// llamador debe seguir usando el recorte del marco guía sin segmentar,
+/// para no arriesgar un recorte peor que el que ya se tenía.
+///
+/// Validado en un prototipo Python (Sobel + `skimage.segmentation.watershed`)
+/// contra fotos reales de un llavero: aísla razonablemente bien la silueta
+/// del objeto, aunque protrusiones delgadas (una llave suelta apuntando
+/// hacia afuera) a veces quedan fuera de la máscara — limitación conocida
+/// de watershed con semillas simples de centro/borde, mitigada por el
+/// padding del bounding box y por el chequeo de fracción de área.
+img.Image? segmentForeground(img.Image image, {int workSize = 160}) {
+  try {
+    final w = image.width;
+    final h = image.height;
+    if (w < 8 || h < 8) return null;
+
+    final scale = workSize / math.max(w, h);
+    final ww = math.max(1, (w * scale).round());
+    final wh = math.max(1, (h * scale).round());
+    final small = img.copyResize(image, width: ww, height: wh, interpolation: img.Interpolation.average);
+
+    // 1) Escala de grises como Float32List.
+    final gray = Float32List(ww * wh);
+    for (var y = 0; y < wh; y++) {
+      for (var x = 0; x < ww; x++) {
+        final p = small.getPixel(x, y);
+        gray[y * ww + x] = 0.299 * p.r + 0.587 * p.g + 0.114 * p.b;
+      }
+    }
+
+    // 2) Gradiente de Sobel (magnitud) -> "elevación".
+    final grad = Float32List(ww * wh);
+    double maxGrad = 0;
+    for (var y = 0; y < wh; y++) {
+      for (var x = 0; x < ww; x++) {
+        final gx = _sobelX(gray, x, y, ww, wh);
+        final gy = _sobelY(gray, x, y, ww, wh);
+        final mag = math.sqrt(gx * gx + gy * gy);
+        grad[y * ww + x] = mag;
+        if (mag > maxGrad) maxGrad = mag;
+      }
+    }
+    if (maxGrad <= 0) return null;
+
+    // 3) Marcadores: 0 = sin asignar, 1 = primer plano (centro), 2 = fondo
+    // (anillo de 2px en el borde).
+    const int unassigned = 0;
+    const int foreground = 1;
+    const int background = 2;
+    final labels = Uint8List(ww * wh);
+
+    final cx = ww ~/ 2;
+    final cy = wh ~/ 2;
+    final seedRadius = math.max(1, (math.min(ww, wh) * 0.06).round());
+    for (var dy = -seedRadius; dy <= seedRadius; dy++) {
+      for (var dx = -seedRadius; dx <= seedRadius; dx++) {
+        final x = cx + dx;
+        final y = cy + dy;
+        if (x >= 0 && x < ww && y >= 0 && y < wh) {
+          labels[y * ww + x] = foreground;
+        }
+      }
+    }
+    const int borderRing = 2;
+    for (var y = 0; y < wh; y++) {
+      for (var x = 0; x < ww; x++) {
+        if (x < borderRing || y < borderRing || x >= ww - borderRing || y >= wh - borderRing) {
+          labels[y * ww + x] = background;
+        }
+      }
+    }
+
+    // 4) Watershed por inmersión: cola de prioridad de 256 buckets sobre el
+    // gradiente cuantizado. Cada bucket contiene los índices de píxeles con
+    // ese nivel de gradiente pendientes de procesar, en orden creciente.
+    final buckets = List<List<int>>.generate(256, (_) => <int>[]);
+    for (var i = 0; i < ww * wh; i++) {
+      if (labels[i] != unassigned) {
+        final level = (grad[i] / maxGrad * 255).round().clamp(0, 255);
+        buckets[level].add(i);
+      }
+    }
+
+    int processed = 0;
+    final total = ww * wh;
+    for (var level = 0; level < 256 && processed < total; level++) {
+      final queue = buckets[level];
+      var qi = 0;
+      while (qi < queue.length) {
+        final idx = queue[qi];
+        qi++;
+        processed++;
+        final x = idx % ww;
+        final y = idx ~/ ww;
+        final label = labels[idx];
+        for (final n in _neighbors4(x, y, ww, wh)) {
+          final nIdx = n[1] * ww + n[0];
+          if (labels[nIdx] == unassigned) {
+            labels[nIdx] = label;
+            final nLevel = (grad[nIdx] / maxGrad * 255).round().clamp(0, 255);
+            if (nLevel <= level) {
+              queue.add(nIdx);
+            } else {
+              buckets[nLevel].add(nIdx);
+            }
+            processed++;
+          }
+        }
+      }
+    }
+
+    // 5) Bounding box de la región de primer plano + chequeo de fracción de
+    // área razonable.
+    int minX = ww, minY = wh, maxX = -1, maxY = -1;
+    int fgCount = 0;
+    for (var y = 0; y < wh; y++) {
+      for (var x = 0; x < ww; x++) {
+        if (labels[y * ww + x] == foreground) {
+          fgCount++;
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < 0 || maxY < 0) return null;
+    final fgFraction = fgCount / total;
+    if (fgFraction < 0.02 || fgFraction > 0.85) return null;
+
+    // Convertir bbox del tamaño de trabajo a coordenadas de la imagen
+    // original, con padding.
+    final invScale = 1.0 / scale;
+    const double padding = 0.10;
+    final boxW = (maxX - minX + 1).toDouble();
+    final boxH = (maxY - minY + 1).toDouble();
+    final padX = boxW * padding;
+    final padY = boxH * padding;
+
+    final left = ((minX - padX) * invScale).clamp(0.0, w.toDouble());
+    final top = ((minY - padY) * invScale).clamp(0.0, h.toDouble());
+    final right = ((maxX + 1 + padX) * invScale).clamp(0.0, w.toDouble());
+    final bottom = ((maxY + 1 + padY) * invScale).clamp(0.0, h.toDouble());
+
+    final cropW = (right - left).round();
+    final cropH = (bottom - top).round();
+    if (cropW <= 0 || cropH <= 0) return null;
+
+    return img.copyCrop(image, x: left.round(), y: top.round(), width: cropW, height: cropH);
+  } catch (_) {
+    return null;
+  }
+}
+
+double _sobelX(Float32List gray, int x, int y, int w, int h) {
+  double v(int dx, int dy) {
+    final xx = (x + dx).clamp(0, w - 1);
+    final yy = (y + dy).clamp(0, h - 1);
+    return gray[yy * w + xx];
+  }
+  return (v(1, -1) + 2 * v(1, 0) + v(1, 1)) - (v(-1, -1) + 2 * v(-1, 0) + v(-1, 1));
+}
+
+double _sobelY(Float32List gray, int x, int y, int w, int h) {
+  double v(int dx, int dy) {
+    final xx = (x + dx).clamp(0, w - 1);
+    final yy = (y + dy).clamp(0, h - 1);
+    return gray[yy * w + xx];
+  }
+  return (v(-1, 1) + 2 * v(0, 1) + v(1, 1)) - (v(-1, -1) + 2 * v(0, -1) + v(1, -1));
+}
+
+List<List<int>> _neighbors4(int x, int y, int w, int h) {
+  final result = <List<int>>[];
+  if (x > 0) result.add([x - 1, y]);
+  if (x < w - 1) result.add([x + 1, y]);
+  if (y > 0) result.add([x, y - 1]);
+  if (y < h - 1) result.add([x, y + 1]);
+  return result;
 }
