@@ -272,6 +272,21 @@ class MetricsLogger {
     return _allFileNames.map((n) => '${dir.path}/$n').toList();
   }
 
+  /// Últimas [maxLines] líneas de un archivo de métricas, para mostrar
+  /// directo en pantalla (visor de Ajustes) sin depender de compartir el
+  /// archivo. Las más recientes primero. Lista vacía si el archivo no
+  /// existe o está vacío.
+  Future<List<String>> readLastLines(String fileName, {int maxLines = 20}) async {
+    final dir = await _getMetricsDir();
+    final file = File('${dir.path}/$fileName');
+    if (!await file.exists()) return const [];
+    final lines = (await file.readAsLines())
+        .where((l) => l.trim().isNotEmpty)
+        .toList();
+    final start = (lines.length - maxLines).clamp(0, lines.length);
+    return lines.sublist(start).reversed.toList();
+  }
+
   /// Borra los 3 archivos de métricas (los que existan). Pensado para
   /// arrancar una tanda de pruebas de campo desde cero.
   Future<void> deleteAllMetrics() async {

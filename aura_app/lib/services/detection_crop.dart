@@ -29,6 +29,26 @@ img.Image centerCrop(img.Image image, {double fraction = 0.65}) {
   return img.copyCrop(image, x: x, y: y, width: cropW, height: cropH);
 }
 
+/// Normaliza brillo/contraste antes de extraer el embedding: estira el
+/// rango de intensidad de la imagen a [0, 255]. Objetivo: que la diferencia
+/// de iluminación entre el momento de GUARDAR un objeto y el momento de
+/// BUSCARLO pese menos en el embedding resultante — hoy una foto guardada
+/// con luz de día y buscada con luz artificial (o viceversa) puede dar una
+/// similitud coseno más baja solo por el cambio de luz, no por ser un
+/// objeto distinto.
+///
+/// Debe aplicarse en AMBOS lados (guardar y buscar) para que ayude — ver
+/// `save_object_screen.dart` y `real_search_screen.dart`. Si falla por
+/// cualquier motivo, devuelve la imagen original sin normalizar en vez de
+/// interrumpir el flujo de guardado/búsqueda.
+img.Image normalizeForEmbedding(img.Image image) {
+  try {
+    return img.normalize(image, min: 0, max: 255);
+  } catch (_) {
+    return image;
+  }
+}
+
 /// Recorta [image] alrededor del [Detection] de mayor confianza detectado
 /// por YOLO, con un margen de padding alrededor del bounding box para no
 /// cortar el objeto demasiado ajustado (p. ej. si YOLO subestima ligeramente

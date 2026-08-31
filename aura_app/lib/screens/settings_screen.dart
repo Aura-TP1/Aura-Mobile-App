@@ -94,6 +94,66 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await Share.shareXFiles(existing, text: 'Métricas de AURA');
   }
 
+  /// Muestra las últimas líneas de un archivo de métricas directo en
+  /// pantalla, con el JSON de cada registro formateado legible — antes la
+  /// única forma de ver esto era compartir el archivo y abrirlo en otra
+  /// app (o por cable/ADB).
+  Future<void> _showMetricsFile(String fileName) async {
+    final lines = await MetricsLogger.instance.readLastLines(fileName, maxLines: 20);
+    if (!mounted) return;
+    const encoder = JsonEncoder.withIndent('  ');
+    final formatted = lines.map((line) {
+      try {
+        return encoder.convert(json.decode(line));
+      } catch (_) {
+        return line; // línea corrupta/parcial: mostrarla cruda en vez de fallar
+      }
+    }).toList();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1e1e1e),
+        title: Text(fileName, style: const TextStyle(color: Colors.white, fontSize: 16)),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 420,
+          child: lines.isEmpty
+              ? const Text('Sin registros todavía.', style: TextStyle(color: Colors.white54))
+              : SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Últimos registros (más reciente primero):',
+                        style: TextStyle(color: Colors.white54, fontSize: 12),
+                      ),
+                      const SizedBox(height: 8),
+                      for (final entry in formatted) ...[
+                        SelectableText(
+                          entry,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                        const Divider(color: Colors.white24, height: 20),
+                      ],
+                    ],
+                  ),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar', style: TextStyle(color: Colors.white70)),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _confirmClearMetrics() {
     showDialog(
       context: context,
@@ -734,9 +794,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       for (final f in info)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 4),
-                          child: Text(
-                            '${f.fileName}: ${f.lineCount} registros',
-                            style: const TextStyle(color: Colors.white70, fontSize: 13),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '${f.fileName}: ${f.lineCount} registros',
+                                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: f.lineCount == 0
+                                    ? null
+                                    : () => _showMetricsFile(f.fileName),
+                                child: const Text('Ver'),
+                              ),
+                            ],
                           ),
                         ),
                     ],

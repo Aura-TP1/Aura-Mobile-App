@@ -349,19 +349,44 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         discardedBoxHeight: discardedBoxHeight,
       );
 
+      // Normalizar brillo/contraste antes de generar las variantes: que
+      // la luz del momento de guardar pese menos al comparar contra la
+      // luz del momento de buscar (ver detection_crop.dart).
+      toEmbed = normalizeForEmbedding(toEmbed);
+
       // Variantes sintéticas de la MISMA foto ya recortada — sin tomar
-      // fotos nuevas ni pedirle nada más al usuario.
+      // fotos nuevas ni pedirle nada más al usuario. Además de las
+      // rotaciones/espejo originales: ángulos intermedios (en la vida
+      // real nadie gira un objeto exactamente 90°), una versión con más
+      // zoom (el objeto puede verse más cerca al buscarlo que al
+      // guardarlo) y variantes de brillo (distinta luz entre guardar y
+      // buscar).
       final variants = <String, img.Image>{
         'original': toEmbed,
+        'rot45': img.copyRotate(toEmbed, angle: 45),
         'rot90': img.copyRotate(toEmbed, angle: 90),
+        'rot135': img.copyRotate(toEmbed, angle: 135),
         'rot180': img.copyRotate(toEmbed, angle: 180),
+        'rot225': img.copyRotate(toEmbed, angle: 225),
         'rot270': img.copyRotate(toEmbed, angle: 270),
+        'rot315': img.copyRotate(toEmbed, angle: 315),
         'flip': img.flipHorizontal(toEmbed),
+        'zoom_in': centerCrop(toEmbed, fraction: 0.85),
+        'bright_up': img.adjustColor(toEmbed, brightness: 1.25),
+        'bright_down': img.adjustColor(toEmbed, brightness: 0.75),
       };
 
       final results = <ObjectEmbedding>[];
       for (final entry in variants.entries) {
-        final emb = await _embeddings.extractEmbedding(entry.value);
+        List<double> emb;
+        try {
+          emb = await _embeddings.extractEmbedding(entry.value);
+        } catch (e) {
+          // Una variante individual fallando (ej. imagen demasiado chica
+          // tras el zoom) no debe tirar abajo el resto.
+          debugPrint('[save_object] Variante "${entry.key}" falló: $e');
+          continue;
+        }
         if (emb.isNotEmpty) {
           results.add(ObjectEmbedding.create(embedding: emb, angleDescription: entry.key));
         }

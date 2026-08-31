@@ -232,7 +232,10 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           debugPrint('[real_search] Detector YOLO no cargado; usando imagen completa como fallback.');
         }
 
-        final frameEmb = await _embeddings.extractEmbedding(toEmbed);
+        // Mismo preprocesamiento que al guardar (ver detection_crop.dart):
+        // sin esto, comparar una foto guardada con una luz contra una
+        // buscada con otra luz mete ruido adicional al embedding.
+        final frameEmb = await _embeddings.extractEmbedding(normalizeForEmbedding(toEmbed));
         if (frameEmb.isEmpty) {
           await Future.delayed(_frameInterval);
           continue;
