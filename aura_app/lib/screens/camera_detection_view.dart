@@ -885,6 +885,11 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
                 onTap: _streamActive ? _stopDetection : _startDetection,
                 child: GestureDetector(
                   onTap: _streamActive ? _stopDetection : _startDetection,
+                  // Sin esto el botón queda con dos acciones de tap en el
+                  // árbol de accesibilidad y el doble toque de TalkBack las
+                  // dispara a las dos: la detección arrancaba y se detenía
+                  // en el mismo gesto.
+                  excludeFromSemantics: true,
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
                     width: 104,
@@ -1045,6 +1050,11 @@ class _IconButton extends StatelessWidget {
       onTap: onTap,
       child: GestureDetector(
         onTap: onTap,
+        // El ExcludeSemantics de abajo tapa los nodos del Icon y el Text,
+        // pero el GestureDetector publica además su propia acción de tap: con
+        // eso el botón quedaba con dos acciones y el doble toque de TalkBack
+        // disparaba `onTap` dos veces.
+        excludeFromSemantics: true,
         // El label ya está en el Semantics padre — sin ExcludeSemantics,
         // el Icon y el Text de abajo generan sus propios nodos y pueden
         // hacer que TalkBack no lea el label correcto o lo repita.

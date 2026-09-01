@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -13,7 +14,6 @@ import '../services/detection_crop.dart';
 import '../services/embedding_service.dart';
 import '../services/google_auth_service.dart';
 import '../services/metrics_logger.dart';
-import '../services/object_detector.dart';
 import '../services/saved_objects_repository.dart';
 import '../services/voice_input_service.dart';
 import '../services/tts.dart';
@@ -21,12 +21,6 @@ import '../theme/aura_colors.dart';
 
 const Color _kAuraRed = AuraColors.red;
 const double _kMinButtonHeight = kAuraMinButtonHeight;
-
-/// Fracción del encuadre (ancho y alto) que cubre el marco guía mostrado
-/// al usuario al guardar un objeto. El recorte final usa EXACTAMENTE esta
-/// misma fracción (ver `_captureEmbedding`) — lo que se ve en pantalla es
-/// lo que se recorta, sin depender de que YOLO reconozca el objeto.
-const double kGuideFrameFraction = 0.6;
 
 /// Pantalla para guardar un objeto personal.
 ///
@@ -51,8 +45,6 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
   final SavedObjectsRepository _repo = SavedObjectsRepository();
   final EmbeddingService _embeddings =
       EmbeddingService(useInt8: AppSettings.instance.useEmbeddingInt8);
-  final ObjectDetector _detector =
-      ObjectDetector(useInt8: AppSettings.instance.useYoloInt8);
   late final VoiceInputService _voice = VoiceInputService(_audio);
   final GoogleAuthService _auth = GoogleAuthService();
   final BackendService _backend = BackendService();
@@ -68,6 +60,10 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
   // Estado
   bool _modelLoaded = false;
   bool _isSaving = false;
+  /// `true` desde que dispara el obturador hasta que terminan de extraerse
+  /// los embeddings — sirve para que el botón diga "PROCESANDO..." en vez de
+  /// quedarse en "GUARDANDO..." sin distinguir las dos fases.
+  bool _isProcessing = false;
   bool _isListeningMic = false;
   bool _handledArgs = false;
 
@@ -106,7 +102,6 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       await Future.wait([
         _initCamera(),
         _embeddings.loadModel(),
-        _detector.loadModel(),
       ]);
       if (mounted) setState(() => _modelLoaded = _embeddings.isLoaded);
     }
@@ -125,6 +120,24 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         enableAudio: false,
       );
       await controller.initialize();
+      // Sin esto, algunos Android disparan el flash automático en poca luz al
+      // llamar takePicture() — el plugin no fija FlashMode por defecto. Al
+      // usuario le aparecía el flash de la nada al guardar un objeto. Mismo
+      // bloque que ya estaba en camera_detection_view.dart.
+      try {
+        await controller.setFlashMode(FlashMode.off);
+      } catch (e) {
+        debugPrint('No se pudo forzar flash apagado: $e');
+      }
+      // Fija la orientación de la captura a la que tiene el teléfono al
+      // abrir la pantalla, para que la foto no cambie de orientación según
+      // cómo se sostenga el equipo — el recorte del marco guía depende de
+      // que la foto y lo que se ve en pantalla coincidan.
+      try {
+        await controller.lockCaptureOrientation();
+      } catch (e) {
+        debugPrint('No se pudo fijar la orientación de captura: $e');
+      }
       if (!mounted) {
         await controller.dispose();
         return;
@@ -143,7 +156,6 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     _voice.stop();
     _camera?.dispose();
     _embeddings.dispose();
-    _detector.dispose();
     _audio.stop();
     _audio.dispose();
     _nameController.dispose();
@@ -274,7 +286,12 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
          );
        }
      } finally {
-       if (mounted) setState(() => _isSaving = false);
+       if (mounted) {
+         setState(() {
+           _isSaving = false;
+           _isProcessing = false;
+         });
+       }
      }
    }
 
@@ -291,76 +308,79 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
   /// un objeto y toma el máximo, así que agregar estas variantes sintéticas
   /// aquí no requiere ningún cambio del lado de la búsqueda.
   Future<List<ObjectEmbedding>> _captureEmbedding() async {
-    await _audio.speak('Mantén firme. Capturando.');
-    await Future.delayed(const Duration(milliseconds: 400));
+    // Sin await: `speak` no retorna hasta que el TTS TERMINA de pronunciar
+    // la frase (awaitSpeakCompletion(true) en tts.dart), así que esperarla
+    // metía ~2 segundos muertos entre que el usuario tocaba el botón y el
+    // obturador — sin ninguna señal de que algo estuviera pasando.
+    unawaited(_audio.speak('Mantén firme.'));
+    await Future.delayed(const Duration(milliseconds: 600));
     if (!_cameraReady || _camera == null) return const [];
     try {
       final xfile = await _camera!.takePicture();
+
+      // Feedback en el INSTANTE del obturador. Antes el único háptico estaba
+      // al final de todo el guardado, así que un usuario que no ve la
+      // pantalla no tenía forma de saber cuándo se tomó la foto (ni si ya se
+      // había tomado): movía el objeto creyendo que todavía no había
+      // disparado. El háptico marca el disparo y la voz avisa que ahora sí
+      // puede bajar la mano mientras se procesa.
+      unawaited(_audio.haptic(120));
+      unawaited(_audio.speak('Listo. Procesando.'));
+      if (mounted) setState(() => _isProcessing = true);
+
       final bytes = await xfile.readAsBytes();
       final decoded = img.decodeImage(bytes);
       if (decoded == null) return const [];
 
-      // Recorte determinístico al marco guía que se le mostró al usuario
-      // en pantalla (ver _buildCameraArea, kGuideFrameFraction) — YA NO
-      // depende de que YOLO reconozca el objeto para elegir la región.
+      // Recorte determinístico al marco guía CUADRADO que se le mostró al
+      // usuario (ver _buildCameraArea) — no depende de que YOLO reconozca
+      // el objeto para elegir la región. Antes se usaba la detección de
+      // YOLO de mayor puntaje, y falló dos veces con datos reales: al
+      // guardar una pastilla (sin clase COCO, confianza siempre baja), YOLO
+      // se quedaba con un objeto de fondo que SÍ tiene clase COCO (primero
+      // "teclado", después "laptop"). No es un problema de calibrar el
+      // puntaje: YOLO es un clasificador de 80 categorías fijas, no un
+      // detector de objetos genéricos.
       //
-      // Antes se usaba la detección de YOLO de mayor puntaje para elegir
-      // el recorte. Eso falló dos veces con datos reales de campo: al
-      // guardar una pastilla (sin clase COCO, confianza siempre baja),
-      // YOLO se quedó con un objeto de fondo que SÍ tiene clase COCO
-      // (primero "teclado", después "laptop") y el embedding terminó
-      // representando el objeto equivocado. Ajustar el puntaje de
-      // selección (confianza + centrado + tamaño) no alcanzó — es un
-      // problema de arquitectura: YOLO es un clasificador de 80 categorías
-      // fijas, no un detector de objetos genéricos, así que cualquier
-      // heurística sobre su salida sigue perdiendo contra el próximo
-      // objeto COCO real que aparezca en el encuadre.
-      //
-      // El marco guía elimina ese modo de falla: el usuario controla qué
-      // entra al recorte (se le indica por voz y se le muestra en
-      // pantalla), no un clasificador.
-      var toEmbed = centerCrop(decoded, fraction: kGuideFrameFraction);
+      // El marco guía por sí solo tampoco alcanzaba, porque el recorte era
+      // `centerCrop(decoded, fraction: 0.6)` — el 60% del ancho y el 60%
+      // del alto de la foto CRUDA — que no es la región que el usuario
+      // tenía dentro del marco: `img.decodeImage` no aplica la rotación
+      // EXIF, así que la foto se procesaba apaisada mientras el preview se
+      // veía vertical, y el recorte salía ancho y con medio teclado adentro
+      // aunque la pastilla estuviera centrada en el marco.
+      // `cropToGuideSquare` aplica la orientación y recorta un cuadrado
+      // centrado, que es invariante a ese desfase (ver detection_crop.dart).
+      final oriented = bakePhotoOrientation(decoded);
+      var toEmbed = cropToGuideSquare(oriented);
       var cropMethod = 'guide_frame';
 
       // Sobre el recorte del marco guía, intentar ceñir aún más al objeto
       // con segmentación de primer plano sin clases (watershed): el marco
-      // guía ya excluye el fondo lejano, pero dentro de ese 60% todavía
+      // guía ya excluye el fondo lejano, pero dentro del cuadrado todavía
       // puede haber fondo (teclado, mesa) alrededor del objeto real. El
       // watershed no reconoce clases — solo separa por bordes/contraste —
       // así que no puede "confundir" el objeto con mobiliario cercano como
       // hacía YOLO. Si el resultado no es confiable, se conserva el
       // recorte del marco guía sin modificar (ver segmentForeground).
-      final segmented = segmentForeground(toEmbed);
-      if (segmented != null) {
-        toEmbed = segmented;
-        cropMethod = 'watershed_segmentation';
-      }
-
-      // YOLO se sigue corriendo, pero solo con fines informativos/de
-      // métricas (para saber qué "cree" ver ahí y poder comparar contra
-      // el nombre real que puso el usuario) — ya no decide el recorte.
-      int? cropClassId;
-      String? cropLabel;
-      double? cropConfidence;
-      if (_detector.isLoaded) {
-        final detections =
-            await _detector.detect(decoded, confThreshold: kCropConfThreshold);
-        final best = bestCropCandidate(detections);
-        if (best != null) {
-          cropClassId = cocoLabels.indexOf(best.label);
-          cropLabel = best.label;
-          cropConfidence = best.confidence;
+      if (AppSettings.instance.useWatershedSegmentation) {
+        final segmented = segmentForeground(toEmbed);
+        if (segmented != null) {
+          toEmbed = segmented;
+          cropMethod = 'watershed_segmentation';
         }
       }
 
+      // YOLO ya no se corre acá. Dejó de decidir el recorte cuando entró el
+      // marco guía, y seguía costando cientos de milisegundos en el hilo de
+      // UI solo para anotar en las métricas qué clase COCO creía ver — parte
+      // del lag que el usuario reportaba entre tocar el botón y tener el
+      // objeto guardado.
       // ignore: discarded_futures
       MetricsLogger.instance.logCropSelection(
         screen: 'save_object',
         objectLabel: _nameController.text.trim(),
         cropMethod: cropMethod,
-        detectionClassId: cropClassId,
-        detectionLabel: cropLabel,
-        detectionConfidence: cropConfidence,
       );
 
       // Guardar el recorte real (antes de normalizar) para el visor
@@ -375,10 +395,39 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         cropMethod: cropMethod,
       );
 
+      // Y además el encuadre COMPLETO con el marco guía dibujado encima. Es
+      // lo que permite contestar a simple vista "¿lo que estaba dentro del
+      // marco es de verdad lo que se recortó?" — con solo el recorte final
+      // guardado, si salía mal no había forma de distinguir un problema de
+      // encuadre del usuario de un problema de geometría del recorte. Se
+      // reduce a 640px de lado mayor porque es solo para mirarlo.
+      // ignore: discarded_futures
+      MetricsLogger.instance.saveCropDebugImage(
+        img.encodeJpg(
+          img.copyResize(
+            drawGuideSquareOverlay(oriented),
+            width: oriented.width >= oriented.height ? 640 : null,
+            height: oriented.height > oriented.width ? 640 : null,
+          ),
+          quality: 80,
+        ),
+        objectLabel: _nameController.text.trim(),
+        cropMethod: 'guide_overlay',
+      );
+
       // Normalizar brillo/contraste antes de generar las variantes: que
       // la luz del momento de guardar pese menos al comparar contra la
       // luz del momento de buscar (ver detection_crop.dart).
       toEmbed = normalizeForEmbedding(toEmbed);
+
+      // Reducir UNA sola vez al tamaño de entrada del modelo antes de generar
+      // las variantes. Antes cada una de las 12 rotaciones/espejos/brillos se
+      // hacía sobre el recorte a resolución completa y recién
+      // `embedding_service_native.dart` la reescalaba a 224x224 — o sea, 12
+      // veces el trabajo de píxeles sobre imágenes grandes, en el hilo de UI,
+      // para terminar en el mismo 224x224. El recorte ya es cuadrado, así que
+      // reducirlo acá no deforma nada.
+      toEmbed = img.copyResize(toEmbed, width: 224, height: 224);
 
       // Variantes sintéticas de la MISMA foto ya recortada — sin tomar
       // fotos nuevas ni pedirle nada más al usuario. Además de las
@@ -491,20 +540,33 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
             // del objeto real, YOLO se quedaba con el objeto equivocado
             // (confirmado con datos reales: eligió "teclado" y luego
             // "laptop" en vez de la pastilla que se quería guardar).
+            // El marco es CUADRADO (lado = 60% del lado más corto del
+            // preview), no un 60%x60% del ancho y del alto. Tiene que
+            // coincidir exactamente con lo que recorta cropToGuideSquare:
+            // un cuadrado centrado es la única forma de que la región del
+            // marco y la región recortada sean la misma aunque la foto
+            // capturada y el preview no coincidan en orientación o relación
+            // de aspecto (ver detection_crop.dart).
             IgnorePointer(
               child: Center(
-                child: FractionallySizedBox(
-                  widthFactor: kGuideFrameFraction,
-                  heightFactor: kGuideFrameFraction,
-                  child: Semantics(
-                    label: 'Marco guía: coloca el objeto dentro de este recuadro',
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.white, width: 3),
-                        borderRadius: BorderRadius.circular(12),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final side = kGuideFrameFraction *
+                        math.min(constraints.maxWidth, constraints.maxHeight);
+                    return Semantics(
+                      label: 'Marco guía: coloca el objeto dentro de este recuadro',
+                      child: SizedBox(
+                        width: side,
+                        height: side,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.white, width: 3),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 ),
               ),
             ),
@@ -605,6 +667,12 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
           onTap: _handleMicTap,
           child: GestureDetector(
             onTap: _handleMicTap,
+            // Sin esto el botón queda con DOS acciones de tap en el árbol de
+            // accesibilidad (la del Semantics de arriba y la que el propio
+            // GestureDetector publica), y con TalkBack el doble toque las
+            // dispara a las dos: el micrófono arrancaba y se cortaba solo en
+            // el mismo gesto.
+            excludeFromSemantics: true,
             child: Container(
               width: 60,
               height: 60,
@@ -642,7 +710,9 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
      // esté listo, en vez de dejar tocar y recién ahí avisar.
      final notReady = !kIsWeb && (!_cameraReady || !_modelLoaded);
      final String label;
-     if (_isSaving) {
+     if (_isProcessing) {
+       label = 'PROCESANDO...';
+     } else if (_isSaving) {
        label = 'GUARDANDO...';
      } else if (notReady) {
        label = 'PREPARANDO CÁMARA...';

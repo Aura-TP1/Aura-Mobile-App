@@ -37,6 +37,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late TextEditingController _testRunLabelController;
   late bool _useYoloInt8;
   late bool _useEmbeddingInt8;
+  late bool _useWatershed;
   final String _appVersion = '7.1.0 (VISTA)';
   bool _isSignedIn = false;
   String? _userEmail;
@@ -64,6 +65,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         TextEditingController(text: AppSettings.instance.testRunLabel);
     _useYoloInt8 = AppSettings.instance.useYoloInt8;
     _useEmbeddingInt8 = AppSettings.instance.useEmbeddingInt8;
+    _useWatershed = AppSettings.instance.useWatershedSegmentation;
     _audio.init();
     _checkAuthStatus();
     _loadMetricsInfo();
@@ -1142,6 +1144,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     onChanged: (value) {
                       setState(() => _useEmbeddingInt8 = value);
                       AppSettings.instance.setUseEmbeddingInt8(value);
+                    },
+                    activeColor: const Color(0xFF2196F3),
+                    inactiveTrackColor: Colors.white24,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white.withOpacity(0.1)),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Semantics(
+              toggled: _useWatershed,
+              label: 'Ceñir el recorte al objeto con watershed',
+              child: Row(
+                children: [
+                  const Icon(Icons.crop_free, color: Colors.white70, size: 20),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Ceñir recorte (watershed)',
+                            style: TextStyle(color: Colors.white, fontSize: 14)),
+                        Text(
+                          'Separa el objeto del fondo dentro del marco guía, sin '
+                          'usar clases. Se aplica igual al guardar y al buscar. '
+                          'Apágalo para comparar contra el marco guía solo.',
+                          style: TextStyle(color: Colors.white54, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: _useWatershed,
+                    onChanged: (value) {
+                      setState(() => _useWatershed = value);
+                      AppSettings.instance.setUseWatershedSegmentation(value);
                     },
                     activeColor: const Color(0xFF2196F3),
                     inactiveTrackColor: Colors.white24,

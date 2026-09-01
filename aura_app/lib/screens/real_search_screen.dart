@@ -11,7 +11,6 @@ import '../models/saved_object.dart';
 import '../services/detection_crop.dart';
 import '../services/embedding_service.dart';
 import '../services/embedding_service_common.dart';
-import '../services/object_detector.dart';
 import '../services/tts.dart';
 import '../services/app_settings.dart';
 import '../services/metrics_logger.dart';
@@ -48,8 +47,6 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     with TickerProviderStateMixin {
   final EmbeddingService _embeddings =
       EmbeddingService(useInt8: AppSettings.instance.useEmbeddingInt8);
-  final ObjectDetector _detector =
-      ObjectDetector(useInt8: AppSettings.instance.useYoloInt8);
   final AudioFeedback _audio = AudioFeedback();
   final SavedObjectsRepository _savedObjectsRepo = SavedObjectsRepository();
 
@@ -134,6 +131,24 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         enableAudio: false,
       );
       await controller.initialize();
+      // Sin esto, algunos Android disparan el flash automático en poca luz al
+      // llamar takePicture() — el plugin no fija FlashMode por defecto. En
+      // esta pantalla el bucle de escaneo llama takePicture varias veces por
+      // segundo, así que el flash se prendía solo mientras el usuario
+      // buscaba. Mismo bloque que en camera_detection_view.dart.
+      try {
+        await controller.setFlashMode(FlashMode.off);
+      } catch (e) {
+        debugPrint('No se pudo forzar flash apagado: $e');
+      }
+      // La orientación de captura tiene que quedar fija para que el recorte
+      // del marco guía corresponda a lo que se ve en pantalla, igual que al
+      // guardar (ver save_object_screen.dart).
+      try {
+        await controller.lockCaptureOrientation();
+      } catch (e) {
+        debugPrint('No se pudo fijar la orientación de captura: $e');
+      }
       if (!mounted) {
         await controller.dispose();
         return;
@@ -149,7 +164,9 @@ class _RealSearchScreenState extends State<RealSearchScreen>
   }
 
   Future<void> _loadModel() async {
-    await Future.wait([_embeddings.loadModel(), _detector.loadModel()]);
+    // YOLO ya no se carga acá: dejó de elegir el recorte (ahora es el marco
+    // guía, igual que al guardar) y era el modelo más pesado de los dos.
+    await _embeddings.loadModel();
     if (mounted) setState(() => _modelLoaded = _embeddings.isLoaded);
   }
 
@@ -187,49 +204,23 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           continue;
         }
 
-        // Recortar antes de extraer el embedding del frame, igual que al
-        // guardar el objeto: comparar "objeto recortado vs. objeto
-        // recortado" es lo que hace que la similitud coseno sea
-        // representativa (ver Tabla II). Usa kCropConfThreshold (bajo,
-        // solo localización) en vez del umbral de detección en vivo (0.4):
-        // varios objetos de prueba (llaves, pastillas, lentes) no son
-        // clases COCO y casi nunca cruzan 0.4, así que con ese umbral el
-        // recorte casi siempre caía al frame completo. Si ni con el umbral
-        // bajo hay nada, usa un recorte central en vez de la imagen entera.
-        var toEmbed = image;
-        String cropMethod;
-        int? cropClassId;
-        String? cropLabel;
-        double? cropConfidence;
-        String? cropFallbackReason;
-        double? discardedBoxWidth;
-        double? discardedBoxHeight;
-        if (_detector.isLoaded) {
-          final detections =
-              await _detector.detect(image, confThreshold: kCropConfThreshold);
-          final best = bestCropCandidate(detections);
-          if (best != null) {
-            toEmbed = cropToDetection(image, best);
-            cropMethod = 'yolo_detection';
-            cropClassId = cocoLabels.indexOf(best.label);
-            cropLabel = best.label;
-            cropConfidence = best.confidence;
-          } else {
-            toEmbed = centerCrop(image);
-            cropMethod = 'center_crop_fallback';
-            if (detections.isEmpty) {
-              cropFallbackReason = 'no_detection';
-            } else {
-              cropFallbackReason = 'box_too_small';
-              final discarded = highestConfidence(detections);
-              discardedBoxWidth = discarded?.rect.width;
-              discardedBoxHeight = discarded?.rect.height;
-            }
-            debugPrint('[real_search] Sin detección ≥$kCropConfThreshold; usando center-crop como fallback ($cropFallbackReason).');
+        // EXACTAMENTE el mismo recorte que se usa al guardar
+        // (`save_object_screen.dart` → `_captureEmbedding`). Antes esta
+        // pantalla recortaba con el bbox de YOLO y caía a `centerCrop` si no
+        // había detección, mientras que el guardado ya recortaba al marco
+        // guía: se estaba comparando el recorte ajustado del objeto contra
+        // un recorte del teclado/la mesa, y la similitud coseno se hundía
+        // sin que el objeto hubiera cambiado. Comparar "mismo tipo de
+        // recorte contra mismo tipo de recorte" es lo que hace que el número
+        // de la Tabla II signifique algo.
+        var toEmbed = cropToGuideSquare(image);
+        var cropMethod = 'guide_frame';
+        if (AppSettings.instance.useWatershedSegmentation) {
+          final segmented = segmentForeground(toEmbed);
+          if (segmented != null) {
+            toEmbed = segmented;
+            cropMethod = 'watershed_segmentation';
           }
-        } else {
-          cropMethod = 'full_frame_no_model';
-          debugPrint('[real_search] Detector YOLO no cargado; usando imagen completa como fallback.');
         }
 
         // Mismo preprocesamiento que al guardar (ver detection_crop.dart):
@@ -278,12 +269,6 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           decision: decision,
           stopwatch: metricsStopwatch,
           cropMethod: cropMethod,
-          cropClassId: cropClassId,
-          cropLabel: cropLabel,
-          cropConfidence: cropConfidence,
-          cropFallbackReason: cropFallbackReason,
-          discardedBoxWidth: discardedBoxWidth,
-          discardedBoxHeight: discardedBoxHeight,
         );
 
         if (bestSim >= _threshold) {
@@ -414,7 +399,6 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     _foundController.dispose();
     _camera?.dispose();
     _embeddings.dispose();
-    _detector.dispose();
     _audio.stop();
     _audio.dispose();
     super.dispose();
@@ -469,6 +453,7 @@ class _RealSearchScreenState extends State<RealSearchScreen>
       fit: StackFit.expand,
       children: [
         _buildCameraLayer(),
+        if (_cameraReady && !_detected) _buildGuideFrame(),
         if (_cameraReady && !_detected) _buildRadarOverlay(),
         if (_detected) _buildFoundOverlay(),
         Positioned(
@@ -504,6 +489,36 @@ class _RealSearchScreenState extends State<RealSearchScreen>
       );
     }
     return CameraPreview(_camera!);
+  }
+
+  /// Mismo marco guía cuadrado que en la pantalla de guardar. El recorte que
+  /// se compara es exactamente esta región (ver `cropToGuideSquare`), así que
+  /// el usuario tiene que apuntar igual que cuando guardó el objeto — sin el
+  /// marco visible no hay forma de que sepa qué parte del encuadre cuenta.
+  Widget _buildGuideFrame() {
+    return IgnorePointer(
+      child: Center(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final side = kGuideFrameFraction *
+                math.min(constraints.maxWidth, constraints.maxHeight);
+            return Semantics(
+              label: 'Marco guía: apunta al objeto dentro de este recuadro',
+              child: SizedBox(
+                width: side,
+                height: side,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.white70, width: 3),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   Widget _buildRadarOverlay() {

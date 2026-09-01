@@ -91,6 +91,13 @@ class _MultiAngleCaptureScreenState extends State<MultiAngleCaptureScreen> {
         enableAudio: false,
       );
       await controller.initialize();
+      // Sin esto, algunos Android disparan el flash automático en poca luz al
+      // llamar takePicture() — el plugin no fija FlashMode por defecto.
+      try {
+        await controller.setFlashMode(FlashMode.off);
+      } catch (e) {
+        debugPrint('No se pudo forzar flash apagado: $e');
+      }
       if (!mounted) {
         await controller.dispose();
         return;

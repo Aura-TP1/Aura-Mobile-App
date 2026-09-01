@@ -316,6 +316,11 @@ class _SearchObjectScreenState extends State<SearchObjectScreen>
         onTap: _handleMicTap,
         child: GestureDetector(
         onTap: _handleMicTap,
+        // Sin esto quedan DOS acciones de tap en el árbol de accesibilidad
+        // (la del Semantics y la del propio GestureDetector) y el doble
+        // toque de TalkBack dispara las dos: el micrófono arrancaba y se
+        // cortaba solo en el mismo gesto.
+        excludeFromSemantics: true,
         child: AnimatedBuilder(
           animation: _pulseController,
           builder: (context, child) {

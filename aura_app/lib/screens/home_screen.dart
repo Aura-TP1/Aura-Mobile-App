@@ -33,6 +33,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _reminderTimer;
   DateTime _lastUserActionAt = DateTime.fromMillisecondsSinceEpoch(0);
   bool _isListening = false;
+  /// `true` mientras una pulsación del menú ya está navegando, para que una
+  /// segunda activación no apile otra copia de la misma pantalla.
+  bool _navigating = false;
   bool _showVoiceHints = false;
 
   @override
@@ -77,16 +80,29 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _handleMenuButtonTap(String label, String route,
       {Object? arguments}) async {
-    _lastUserActionAt = DateTime.now();
-    await _audio.speak(label);
-    if (!mounted) return;
-    await Navigator.pushNamed(context, route, arguments: arguments);
-    // De vuelta a home: re-saludar y reiniciar la ventana de gracia.
-    if (!mounted) return;
-    _lastUserActionAt = DateTime.now();
-    await Future.delayed(const Duration(milliseconds: 600));
-    if (!mounted) return;
-    _audio.speak(_kMenuSpeech);
+    // Guard de reentrada: `speak` no retorna hasta que el TTS termina de
+    // pronunciar la etiqueta, así que entre el toque y el `pushNamed` hay
+    // casi un segundo de ventana. Si el botón se activa dos veces en esa
+    // ventana (doble toque de TalkBack, o dos toques rápidos), las dos
+    // invocaciones llegaban a navegar y se apilaban dos copias de la misma
+    // pantalla. La causa de fondo está resuelta en `_buildMenuButton`
+    // (`excludeSemantics`); esto lo cubre igual desde el otro lado.
+    if (_navigating) return;
+    _navigating = true;
+    try {
+      _lastUserActionAt = DateTime.now();
+      await _audio.speak(label);
+      if (!mounted) return;
+      await Navigator.pushNamed(context, route, arguments: arguments);
+      // De vuelta a home: re-saludar y reiniciar la ventana de gracia.
+      if (!mounted) return;
+      _lastUserActionAt = DateTime.now();
+      await Future.delayed(const Duration(milliseconds: 600));
+      if (!mounted) return;
+      _audio.speak(_kMenuSpeech);
+    } finally {
+      _navigating = false;
+    }
   }
 
   // ── Comando de voz global ("TOCA PARA HABLAR") ─────────────────────────
@@ -320,6 +336,15 @@ class _HomeScreenState extends State<HomeScreen> {
       // varios intentos. Con onTap aquí, el doble toque activa el botón
       // de una vez.
       onTap: onTap,
+      // ...pero el InkWell de abajo publica SU PROPIA acción de tap, así que
+      // el botón quedaba con dos acciones en el árbol de accesibilidad y con
+      // TalkBack el doble toque disparaba las dos: `onTap` corría dos veces
+      // y se apilaban dos copias de la misma pantalla (tocar "BUSCAR MI
+      // OBJETO" abría la búsqueda y, al retroceder, aparecía otra búsqueda
+      // idéntica detrás). `excludeSemantics` deja un solo nodo con una sola
+      // acción; el toque físico normal sigue pasando por el InkWell, que no
+      // depende de la semántica.
+      excludeSemantics: true,
       child: Material(
       color: Colors.transparent,
       child: InkWell(

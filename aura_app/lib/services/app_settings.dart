@@ -23,6 +23,7 @@ class AppSettings extends ChangeNotifier {
   static const _kSttPauseForMsKey = 'stt_pause_for_ms';
   static const _kUseYoloInt8Key = 'use_yolo_int8';
   static const _kUseEmbeddingInt8Key = 'use_embedding_int8';
+  static const _kUseWatershedKey = 'use_watershed_segmentation';
   static const _kTestConditionKey = 'test_condition';
   static const _kTestRunLabelKey = 'test_run_label';
 
@@ -53,6 +54,19 @@ class AppSettings extends ChangeNotifier {
   /// original. Default `true`: los datos guardados hasta ahora son de
   /// prueba, no producción, así que no hay compatibilidad que romper.
   bool useEmbeddingInt8 = true;
+
+  /// Si es `true`, después de recortar al marco guía se intenta ceñir aún más
+  /// el recorte al objeto con segmentación de primer plano por watershed
+  /// (ver `detection_crop.dart` → `segmentForeground`). Se aplica igual al
+  /// guardar y al buscar, para que ambos lados comparen el mismo tipo de
+  /// recorte.
+  ///
+  /// Es un toggle y no una constante para poder medir en el teléfono, con
+  /// fotos reales, "marco guía solo" contra "marco guía + watershed" sin
+  /// recompilar — el `cropMethod` de cada corrida queda registrado en
+  /// `crop_metrics.jsonl` y en el nombre de la imagen de depuración, así que
+  /// las dos condiciones se pueden separar después en los datos.
+  bool useWatershedSegmentation = true;
 
   /// Intervalo entre cuadros analizados en la búsqueda por cámara (ms).
   /// WCAG 2.2.1: tiempo ajustable en lugar de fijo (300ms por defecto).
@@ -103,6 +117,8 @@ class AppSettings extends ChangeNotifier {
     useYoloInt8 = prefs.getBool(_kUseYoloInt8Key) ?? useYoloInt8;
     useEmbeddingInt8 =
         prefs.getBool(_kUseEmbeddingInt8Key) ?? useEmbeddingInt8;
+    useWatershedSegmentation =
+        prefs.getBool(_kUseWatershedKey) ?? useWatershedSegmentation;
     scanIntervalMs = prefs.getDouble(_kScanIntervalMsKey) ?? scanIntervalMs;
     ocrDebounceMs = prefs.getDouble(_kOcrDebounceMsKey) ?? ocrDebounceMs;
     ocrCooldownMs = prefs.getDouble(_kOcrCooldownMsKey) ?? ocrCooldownMs;
@@ -181,6 +197,13 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kUseEmbeddingInt8Key, value);
+  }
+
+  Future<void> setUseWatershedSegmentation(bool value) async {
+    useWatershedSegmentation = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kUseWatershedKey, value);
   }
 
   Future<void> setScanIntervalMs(double value) async {

@@ -32,6 +32,95 @@ img.Image centerCrop(img.Image image, {double fraction = 0.65}) {
   return img.copyCrop(image, x: x, y: y, width: cropW, height: cropH);
 }
 
+/// Lado del marco guía cuadrado mostrado al usuario, como fracción del lado
+/// MÁS CORTO del encuadre. El recorte que se guarda/busca usa exactamente
+/// esta misma geometría (ver [cropToGuideSquare]).
+const double kGuideFrameFraction = 0.6;
+
+/// Recorta el CUADRADO centrado que corresponde al marco guía que el usuario
+/// ve en pantalla.
+///
+/// Por qué un cuadrado y no un rectángulo con la forma del preview: la foto
+/// que devuelve `takePicture()` y el widget de preview no comparten
+/// necesariamente ni la relación de aspecto ni la orientación. En Android el
+/// JPEG sale en orientación de sensor (apaisado) con un tag EXIF de rotación
+/// que `img.decodeImage` NO aplica solo, mientras que el preview ya se ve
+/// rotado a la orientación del teléfono. Recortar "el 60% del ancho y el 60%
+/// del alto" de la foto daba entonces una región distinta a la que el usuario
+/// tenía dentro del marco — confirmado en campo: al guardar una pastilla
+/// sobre un teclado, el recorte salía apaisado y ancho, con medio teclado
+/// adentro, aunque en pantalla el objeto estaba centrado en el marco.
+///
+/// Un cuadrado centrado de lado `fraction * min(ancho, alto)` evita el
+/// problema entero: `min(ancho, alto)` no cambia al rotar la imagen 90°, así
+/// que la región del mundo real que queda dentro del cuadrado es la misma
+/// aunque la foto y el preview no coincidan en orientación o aspecto. Además
+/// el recorte llega cuadrado a MobileNetV2, que de todas formas reescala a
+/// 224x224 (ver `embedding_service_native.dart`): antes un recorte apaisado
+/// se deformaba al cuadrarlo, y se deformaba distinto al guardar que al
+/// buscar, lo cual metía diferencia en el embedding sin que el objeto
+/// hubiera cambiado.
+///
+/// [fraction] debe ser EXACTAMENTE la misma que usa el marco dibujado en
+/// pantalla (ver `save_object_screen.dart` / `real_search_screen.dart`).
+img.Image cropToGuideSquare(img.Image photo, {double fraction = kGuideFrameFraction}) {
+  final oriented = bakePhotoOrientation(photo);
+  final side = (math.min(oriented.width, oriented.height) * fraction)
+      .round()
+      .clamp(1, math.min(oriented.width, oriented.height));
+  final x = ((oriented.width - side) / 2).round();
+  final y = ((oriented.height - side) / 2).round();
+  return img.copyCrop(oriented, x: x, y: y, width: side, height: side);
+}
+
+/// Aplica la rotación EXIF a una foto recién decodificada. `img.decodeImage`
+/// deja el tag de orientación sin aplicar, así que sin esto una foto tomada
+/// en vertical se procesa como si fuera apaisada.
+img.Image bakePhotoOrientation(img.Image photo) {
+  try {
+    return img.bakeOrientation(photo);
+  } catch (_) {
+    return photo;
+  }
+}
+
+/// Devuelve una copia del encuadre COMPLETO (ya orientado) con el marco guía
+/// dibujado encima, para guardarla como imagen de depuración junto al
+/// recorte real.
+///
+/// Sirve para responder a simple vista la pregunta "¿lo que estaba dentro del
+/// marco es de verdad lo que se recortó?" — antes solo se guardaba el recorte
+/// final, así que si salía mal no había forma de saber si el problema era el
+/// encuadre del usuario o la geometría del recorte.
+img.Image drawGuideSquareOverlay(img.Image photo, {double fraction = kGuideFrameFraction}) {
+  final oriented = bakePhotoOrientation(photo);
+  final canvas = oriented.clone();
+  final side = (math.min(canvas.width, canvas.height) * fraction).round();
+  final x = ((canvas.width - side) / 2).round();
+  final y = ((canvas.height - side) / 2).round();
+  final thickness = math.max(2, (math.min(canvas.width, canvas.height) * 0.006).round());
+  try {
+    final white = img.ColorRgb8(255, 255, 255);
+    // Rectángulos concéntricos de 1px en vez de un solo `drawRect` con
+    // `thickness`: el resultado visual es el mismo y solo depende de los
+    // parámetros básicos de la API de `image`.
+    for (var i = 0; i < thickness; i++) {
+      img.drawRect(
+        canvas,
+        x1: x + i,
+        y1: y + i,
+        x2: x + side - 1 - i,
+        y2: y + side - 1 - i,
+        color: white,
+      );
+    }
+  } catch (_) {
+    // Dibujar el marco es solo diagnóstico: si falla, igual devolvemos el
+    // encuadre completo, que ya es útil por sí solo.
+  }
+  return canvas;
+}
+
 /// Normaliza brillo/contraste antes de extraer el embedding: estira el
 /// rango de intensidad de la imagen a [0, 255]. Objetivo: que la diferencia
 /// de iluminación entre el momento de GUARDAR un objeto y el momento de
@@ -331,6 +420,16 @@ img.Image? segmentForeground(img.Image image, {int workSize = 160}) {
     if (maxX < 0 || maxY < 0) return null;
     final fgFraction = fgCount / total;
     if (fgFraction < 0.02 || fgFraction > 0.85) return null;
+
+    // Aunque la máscara pase el filtro de área, el bounding box puede seguir
+    // cubriendo casi todo el recorte de entrada (p. ej. una máscara con
+    // forma de X, delgada pero que toca las cuatro esquinas). En ese caso la
+    // segmentación no aporta nada — devolver el mismo recorte "ceñido" da
+    // una falsa sensación de que sí se aisló el objeto, y encima lo etiqueta
+    // como watershed_segmentation en las métricas. Mejor devolver null y
+    // quedarse con el recorte del marco guía.
+    final bboxFraction = ((maxX - minX + 1) * (maxY - minY + 1)) / total;
+    if (bboxFraction > 0.92) return null;
 
     // Convertir bbox del tamaño de trabajo a coordenadas de la imagen
     // original, con padding.
