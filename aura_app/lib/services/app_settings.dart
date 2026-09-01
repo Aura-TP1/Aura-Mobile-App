@@ -24,6 +24,7 @@ class AppSettings extends ChangeNotifier {
   static const _kUseYoloInt8Key = 'use_yolo_int8';
   static const _kUseEmbeddingInt8Key = 'use_embedding_int8';
   static const _kUseWatershedKey = 'use_watershed_segmentation';
+  static const _kUseOrbKey = 'use_orb_matching';
   static const _kTestConditionKey = 'test_condition';
   static const _kTestRunLabelKey = 'test_run_label';
 
@@ -78,6 +79,18 @@ class AppSettings extends ChangeNotifier {
   /// base más segura mientras tanto.
   bool useWatershedSegmentation = false;
 
+  /// Si es `true`, además de la similitud coseno de MobileNetV2 se compara el
+  /// objeto por PUNTOS CLAVE (ORB). Es una señal independiente y complementaria:
+  /// el embedding global se cae al cambiar el fondo, mientras que los
+  /// descriptores locales ignoran el fondo y son invariantes a rotación.
+  ///
+  /// Encendido por defecto: en la validación contra la foto real del blister,
+  /// el peor positivo quedó ~6x por encima del peor negativo, justo en los dos
+  /// casos que fallaban en campo (otro fondo, y el objeto en diagonal). Se
+  /// deja como toggle para poder medir con y sin, y porque MobileNetV2 sigue
+  /// siendo lo que pide el paper: ORB se suma, no lo reemplaza.
+  bool useOrbMatching = true;
+
   /// Intervalo entre cuadros analizados en la búsqueda por cámara (ms).
   /// WCAG 2.2.1: tiempo ajustable en lugar de fijo (300ms por defecto).
   double scanIntervalMs = 300;
@@ -129,6 +142,7 @@ class AppSettings extends ChangeNotifier {
         prefs.getBool(_kUseEmbeddingInt8Key) ?? useEmbeddingInt8;
     useWatershedSegmentation =
         prefs.getBool(_kUseWatershedKey) ?? useWatershedSegmentation;
+    useOrbMatching = prefs.getBool(_kUseOrbKey) ?? useOrbMatching;
     scanIntervalMs = prefs.getDouble(_kScanIntervalMsKey) ?? scanIntervalMs;
     ocrDebounceMs = prefs.getDouble(_kOcrDebounceMsKey) ?? ocrDebounceMs;
     ocrCooldownMs = prefs.getDouble(_kOcrCooldownMsKey) ?? ocrCooldownMs;
@@ -214,6 +228,13 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kUseWatershedKey, value);
+  }
+
+  Future<void> setUseOrbMatching(bool value) async {
+    useOrbMatching = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kUseOrbKey, value);
   }
 
   Future<void> setScanIntervalMs(double value) async {

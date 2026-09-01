@@ -97,6 +97,10 @@ class MetricsLogger {
     required int latencyMs,
     required int storedObjectCount,
     Map<String, double>? allObjectSimilarities,
+    // Coincidencias ORB (puntos clave) contra el objeto buscado. Es la señal
+    // independiente del embedding — se registra para poder recalibrar
+    // OrbMatcher.kMinGoodMatches con datos del teléfono en vez de a ojo.
+    int orbMatches = 0,
     // Diagnóstico del recorte usado para este intento de búsqueda (ver
     // detection_crop.dart): permite analizar, por objeto, si YOLO logró
     // localizar el objeto (aunque sea con baja confianza) o si se usó el
@@ -146,6 +150,7 @@ class MetricsLogger {
         'targetObjectId': targetObjectId,
         'targetObjectName': targetObjectName,
         'targetSimilarity': targetSimilarity,
+        'orbMatches': orbMatches,
         'decision': decision,
         'latencyMs': latencyMs,
         'storedObjectCount': storedObjectCount,

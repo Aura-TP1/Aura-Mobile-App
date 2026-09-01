@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 /// Representa un objeto personal guardado por el usuario.
 ///
 /// - [name] es el nombre hablado/escrito por el usuario (ej. "Mi tomatodo").
@@ -11,6 +14,18 @@ class SavedObject {
   final String name;
   final List<double> embedding; // Retrocompatibilidad
   final List<ObjectEmbedding> embeddings;
+
+  /// Banco de descriptores ORB del objeto, uno por escala (ver
+  /// `orb_matcher.dart` → `buildBank`). Es una señal INDEPENDIENTE del
+  /// embedding de MobileNetV2: describe parches locales alrededor de esquinas
+  /// del objeto, así que no le afecta el fondo y es invariante a rotación.
+  /// Se agregó porque en campo el objeto solo se reconocía sobre el mismo
+  /// fondo, que es el techo de un descriptor global.
+  ///
+  /// Vacío en objetos guardados antes de esta versión: la búsqueda cae a la
+  /// similitud coseno de siempre en ese caso.
+  final List<Uint8List> orbBank;
+
   final DateTime createdAt;
 
   SavedObject({
@@ -18,6 +33,7 @@ class SavedObject {
     required this.name,
     this.embedding = const [],
     this.embeddings = const [],
+    this.orbBank = const [],
     required this.createdAt,
   }) : id = id ?? createdAt.millisecondsSinceEpoch ~/ 1000;
 
@@ -36,6 +52,7 @@ class SavedObject {
         'name': name,
         'embedding': embedding,
         'embeddings': embeddings.map((e) => e.toJson()).toList(),
+        'orbBank': orbBank.map(base64Encode).toList(),
         'createdAt': createdAt.toIso8601String(),
       };
 
@@ -52,11 +69,26 @@ class SavedObject {
       );
     }
 
+    final List<Uint8List> orb = [];
+    if (json['orbBank'] is List) {
+      for (final e in (json['orbBank'] as List)) {
+        if (e is String && e.isNotEmpty) {
+          try {
+            orb.add(base64Decode(e));
+          } catch (_) {
+            // Un bloque corrupto no debe impedir cargar el objeto: sin ORB
+            // la búsqueda sigue funcionando por similitud coseno.
+          }
+        }
+      }
+    }
+
     return SavedObject(
       id: json['id'] as int?,
       name: (json['name'] as String?) ?? '',
       embedding: parsed,
       embeddings: embeddingsList,
+      orbBank: orb,
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
     );
@@ -67,6 +99,7 @@ class SavedObject {
     String? name,
     List<double>? embedding,
     List<ObjectEmbedding>? embeddings,
+    List<Uint8List>? orbBank,
     DateTime? createdAt,
   }) {
     return SavedObject(
@@ -74,6 +107,7 @@ class SavedObject {
       name: name ?? this.name,
       embedding: embedding ?? this.embedding,
       embeddings: embeddings ?? this.embeddings,
+      orbBank: orbBank ?? this.orbBank,
       createdAt: createdAt ?? this.createdAt,
     );
   }

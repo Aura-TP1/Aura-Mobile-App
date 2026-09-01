@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -13,6 +14,7 @@ import '../services/backend_service.dart';
 import '../services/camera_frame_converter.dart';
 import '../services/detection_crop.dart';
 import '../services/embedding_service.dart';
+import '../services/orb_matcher.dart';
 import '../services/google_auth_service.dart';
 import '../services/metrics_logger.dart';
 import '../services/saved_objects_repository.dart';
@@ -63,6 +65,10 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
   /// sí corresponde a lo que encuadró (ver _initCamera).
   CameraImage? _lastFrame;
   bool _streamActive = false;
+
+  /// Banco de descriptores ORB del último recorte capturado, para guardarlo
+  /// junto al objeto (ver orb_matcher.dart).
+  List<Uint8List> _lastOrbBank = const [];
 
   // Estado
   bool _modelLoaded = false;
@@ -268,6 +274,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
        final obj = SavedObject(
          name: name,
          embeddings: embeddings,
+         orbBank: _lastOrbBank,
          createdAt: DateTime.now(),
        );
 
@@ -460,6 +467,20 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       // la luz del momento de guardar pese menos al comparar contra la
       // luz del momento de buscar (ver detection_crop.dart).
       toEmbed = normalizeForEmbedding(toEmbed);
+
+      // Banco de descriptores ORB del recorte, ANTES de reducir a 224: es la
+      // señal que no depende del fondo. El embedding de MobileNetV2 describe
+      // el recorte entero (objeto + lo que quede de fondo alrededor), así que
+      // al cambiar de superficie se cae; los descriptores ORB describen
+      // parches locales sobre esquinas del objeto, y el fondo simplemente no
+      // aporta coincidencias. Se guarda a varias escalas porque la escala es
+      // el punto débil del método (ver kBankScales).
+      if (AppSettings.instance.useOrbMatching) {
+        _lastOrbBank = OrbMatcher.buildBank(toEmbed);
+        debugPrint('[save_object] Banco ORB: ${_lastOrbBank.length} escalas');
+      } else {
+        _lastOrbBank = const [];
+      }
 
       // Reducir UNA sola vez al tamaño de entrada del modelo antes de generar
       // las variantes. Antes cada una de las 12 rotaciones/espejos/brillos se

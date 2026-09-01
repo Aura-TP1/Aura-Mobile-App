@@ -14,6 +14,7 @@ import '../services/embedding_service_common.dart';
 import '../services/tts.dart';
 import '../services/app_settings.dart';
 import '../services/camera_frame_converter.dart';
+import '../services/orb_matcher.dart';
 import '../services/metrics_logger.dart';
 import '../services/saved_objects_repository.dart';
 import '../theme/aura_colors.dart';
@@ -269,10 +270,29 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           bestSim = cosineSimilarity(widget.savedObject.embedding, frameEmb);
         }
 
+        // Segunda señal, INDEPENDIENTE del embedding: coincidencias por
+        // puntos clave (ORB). El embedding de MobileNetV2 describe el recorte
+        // completo, así que al cambiar de superficie se cae — en campo el
+        // objeto solo se reconocía sobre el mismo fondo. Los descriptores ORB
+        // describen parches locales sobre esquinas del objeto: el fondo no
+        // aporta coincidencias y la orientación de cada parche los hace
+        // invariantes a rotación, que eran justo las dos fallas.
+        //
+        // Se suma, no reemplaza: MobileNetV2 sigue siendo lo que pide el
+        // paper, y basta con que CUALQUIERA de las dos señales dé positivo.
+        var orbMatches = 0;
+        final bank = widget.savedObject.orbBank;
+        if (AppSettings.instance.useOrbMatching && bank.isNotEmpty) {
+          final q = OrbMatcher.extract(toEmbed, maxKeypoints: OrbMatcher.kQueryKeypoints);
+          if (q != null) orbMatches = OrbMatcher.bestMatchCount(bank, q);
+        }
+        final orbFound = orbMatches >= OrbMatcher.kMinGoodMatches;
+
         if (!mounted || _disposed) return;
         setState(() => _currentSimilarity = bestSim);
 
-        final decision = bestSim >= _threshold
+        final found = bestSim >= _threshold || orbFound;
+        final decision = found
             ? 'found'
             : (bestSim >= _kMaybeThreshold ? 'maybe' : 'none');
 
@@ -288,9 +308,10 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           decision: decision,
           stopwatch: metricsStopwatch,
           cropMethod: cropMethod,
+          orbMatches: orbMatches,
         );
 
-        if (bestSim >= _threshold) {
+        if (found) {
           await _onFound();
           return;
         } else if (bestSim >= _kMaybeThreshold) {
@@ -321,6 +342,7 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     String? cropFallbackReason,
     double? discardedBoxWidth,
     double? discardedBoxHeight,
+    int orbMatches = 0,
   }) async {
     try {
       final allSavedObjects = await _savedObjectsRepo.getAll();
@@ -347,6 +369,7 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         latencyMs: stopwatch.elapsedMilliseconds,
         storedObjectCount: allSavedObjects.length,
         allObjectSimilarities: allSims,
+        orbMatches: orbMatches,
         cropMethod: cropMethod,
         cropDetectionClassId: cropClassId,
         cropDetectionLabel: cropLabel,

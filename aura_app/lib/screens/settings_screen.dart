@@ -38,6 +38,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool _useYoloInt8;
   late bool _useEmbeddingInt8;
   late bool _useWatershed;
+  late bool _useOrb;
   final String _appVersion = '7.1.0 (VISTA)';
   bool _isSignedIn = false;
   String? _userEmail;
@@ -66,6 +67,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _useYoloInt8 = AppSettings.instance.useYoloInt8;
     _useEmbeddingInt8 = AppSettings.instance.useEmbeddingInt8;
     _useWatershed = AppSettings.instance.useWatershedSegmentation;
+    _useOrb = AppSettings.instance.useOrbMatching;
     _audio.init();
     _checkAuthStatus();
     _loadMetricsInfo();
@@ -1187,6 +1189,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     onChanged: (value) {
                       setState(() => _useWatershed = value);
                       AppSettings.instance.setUseWatershedSegmentation(value);
+                    },
+                    activeColor: const Color(0xFF2196F3),
+                    inactiveTrackColor: Colors.white24,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white.withOpacity(0.1)),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Semantics(
+              toggled: _useOrb,
+              label: 'Comparar tambien por puntos clave',
+              child: Row(
+                children: [
+                  const Icon(Icons.grain, color: Colors.white70, size: 20),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Comparar por puntos clave (ORB)',
+                            style: TextStyle(color: Colors.white, fontSize: 14)),
+                        Text(
+                          'Señal adicional a MobileNetV2: compara esquinas del '
+                          'objeto en vez de la imagen entera, así el fondo no '
+                          'influye y funciona con el objeto girado. Requiere '
+                          'volver a guardar los objetos para que tengan estos '
+                          'datos.',
+                          style: TextStyle(color: Colors.white54, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: _useOrb,
+                    onChanged: (value) {
+                      setState(() => _useOrb = value);
+                      AppSettings.instance.setUseOrbMatching(value);
                     },
                     activeColor: const Color(0xFF2196F3),
                     inactiveTrackColor: Colors.white24,
