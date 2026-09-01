@@ -66,7 +66,17 @@ class AppSettings extends ChangeNotifier {
   /// recompilar — el `cropMethod` de cada corrida queda registrado en
   /// `crop_metrics.jsonl` y en el nombre de la imagen de depuración, así que
   /// las dos condiciones se pueden separar después en los datos.
-  bool useWatershedSegmentation = true;
+  ///
+  /// Por defecto APAGADO: en las dos pruebas de campo el watershed empeoró
+  /// el recorte. En la última se quedó con una región mínima de 2x2
+  /// pastillas en vez del blister completo — el blister tiene perforaciones
+  /// internas que generan bordes fuertes, y la semilla central pequeña
+  /// (`seedRadius` en `detection_crop.dart`) queda atrapada dentro de una
+  /// celda de esa rejilla. Es una limitación de fondo del watershed con
+  /// semillas simples sobre objetos con textura interna marcada, no un
+  /// parámetro mal calibrado. El recorte del marco guía solo es la línea
+  /// base más segura mientras tanto.
+  bool useWatershedSegmentation = false;
 
   /// Intervalo entre cuadros analizados en la búsqueda por cámara (ms).
   /// WCAG 2.2.1: tiempo ajustable en lugar de fijo (300ms por defecto).

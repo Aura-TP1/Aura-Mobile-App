@@ -13,6 +13,7 @@ import '../services/embedding_service.dart';
 import '../services/embedding_service_common.dart';
 import '../services/tts.dart';
 import '../services/app_settings.dart';
+import '../services/camera_frame_converter.dart';
 import '../services/metrics_logger.dart';
 import '../services/saved_objects_repository.dart';
 import '../theme/aura_colors.dart';
@@ -58,6 +59,11 @@ class _RealSearchScreenState extends State<RealSearchScreen>
   bool _scanning = false;
   bool _detected = false;
   bool _disposed = false;
+
+  /// Último frame del stream del preview — es exactamente lo que el usuario
+  /// ve dentro del marco guía (ver _initCamera).
+  CameraImage? _lastFrame;
+  bool _streamActive = false;
   double _currentSimilarity = 0;
 
   late final AnimationController _sweepController;
@@ -131,23 +137,13 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         enableAudio: false,
       );
       await controller.initialize();
-      // Sin esto, algunos Android disparan el flash automático en poca luz al
-      // llamar takePicture() — el plugin no fija FlashMode por defecto. En
-      // esta pantalla el bucle de escaneo llama takePicture varias veces por
-      // segundo, así que el flash se prendía solo mientras el usuario
-      // buscaba. Mismo bloque que en camera_detection_view.dart.
+      // Sin esto, algunos Android disparan el flash automático en poca luz —
+      // el plugin no fija FlashMode por defecto. Mismo bloque que en
+      // camera_detection_view.dart.
       try {
         await controller.setFlashMode(FlashMode.off);
       } catch (e) {
         debugPrint('No se pudo forzar flash apagado: $e');
-      }
-      // La orientación de captura tiene que quedar fija para que el recorte
-      // del marco guía corresponda a lo que se ve en pantalla, igual que al
-      // guardar (ver save_object_screen.dart).
-      try {
-        await controller.lockCaptureOrientation();
-      } catch (e) {
-        debugPrint('No se pudo fijar la orientación de captura: $e');
       }
       if (!mounted) {
         await controller.dispose();
@@ -157,6 +153,19 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         _camera = controller;
         _cameraReady = true;
       });
+
+      // El bucle de escaneo consume el último frame del stream del preview en
+      // vez de llamar takePicture() varias veces por segundo. Además de ser
+      // mucho más liviano y no hacer sonar el obturador, es la única fuente
+      // que muestra exactamente lo mismo que el marco guía en pantalla — al
+      // guardar se hace igual (ver save_object_screen.dart y
+      // camera_frame_converter.dart).
+      try {
+        await controller.startImageStream((frame) => _lastFrame = frame);
+        _streamActive = true;
+      } catch (e) {
+        debugPrint('startImageStream no disponible, se usará takePicture: $e');
+      }
     } catch (e) {
       if (mounted) setState(() => _cameraError = 'Error de cámara: $e');
       debugPrint('RealSearchScreen camera error: $e');
@@ -196,9 +205,19 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         // el flujo ni el timing real del loop.
         final metricsStopwatch = Stopwatch()..start();
 
-        final xfile = await c.takePicture();
-        final bytes = await xfile.readAsBytes();
-        final image = img.decodeImage(bytes);
+        // Frame del stream del preview (lo mismo que ve el usuario dentro
+        // del marco); takePicture() queda como fallback donde el stream no
+        // está soportado.
+        img.Image? image;
+        final frame = _lastFrame;
+        if (_streamActive && frame != null) {
+          image = await CameraFrameConverter.toDisplayImage(frame, c);
+        }
+        if (image == null && !_streamActive) {
+          final xfile = await c.takePicture();
+          final bytes = await xfile.readAsBytes();
+          image = img.decodeImage(bytes);
+        }
         if (image == null) {
           await Future.delayed(_frameInterval);
           continue;
@@ -397,6 +416,10 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     _scanning = false;
     _sweepController.dispose();
     _foundController.dispose();
+    if (_streamActive) {
+      try { _camera?.stopImageStream(); } catch (_) {}
+      _streamActive = false;
+    }
     _camera?.dispose();
     _embeddings.dispose();
     _audio.stop();
@@ -452,8 +475,10 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     return Stack(
       fit: StackFit.expand,
       children: [
+        // El marco guía va DENTRO de _buildCameraLayer, pegado a los límites
+        // del preview: si se dibujara acá quedaría centrado en la pantalla
+        // completa, que no es la misma área que ocupa el preview.
         _buildCameraLayer(),
-        if (_cameraReady && !_detected) _buildGuideFrame(),
         if (_cameraReady && !_detected) _buildRadarOverlay(),
         if (_detected) _buildFoundOverlay(),
         Positioned(
@@ -488,7 +513,19 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         child: CircularProgressIndicator(color: Colors.white38),
       );
     }
-    return CameraPreview(_camera!);
+    // `Center` + `Stack` suelto (sin StackFit.expand): así `CameraPreview`
+    // elige su propia relación de aspecto en vez de estirarse para llenar la
+    // pantalla, y `Positioned.fill` deja el marco guía exactamente sobre el
+    // área del preview. Es lo que hace que el cuadrado dibujado y el
+    // cuadrado que recorta cropToGuideSquare sean la misma región.
+    return Center(
+      child: Stack(
+        children: [
+          CameraPreview(_camera!),
+          if (!_detected) Positioned.fill(child: _buildGuideFrame()),
+        ],
+      ),
+    );
   }
 
   /// Mismo marco guía cuadrado que en la pantalla de guardar. El recorte que

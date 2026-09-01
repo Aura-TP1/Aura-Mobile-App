@@ -184,6 +184,16 @@ class MetricsLogger {
     String? cropFallbackReason,
     double? discardedBoxWidth,
     double? discardedBoxHeight,
+    // Geometría real de la captura. Sirve para verificar que el marco guía
+    // en pantalla y el recorte cubren la misma región: si vuelven a
+    // desalinearse, estos números lo muestran en vez de tener que deducirlo
+    // mirando una foto.
+    String? frameSource,
+    int? frameWidth,
+    int? frameHeight,
+    int? previewWidth,
+    int? previewHeight,
+    int? cropSide,
   }) async {
     try {
       final entry = <String, dynamic>{
@@ -197,6 +207,12 @@ class MetricsLogger {
         'cropFallbackReason': cropFallbackReason,
         'discardedBoxWidth': discardedBoxWidth,
         'discardedBoxHeight': discardedBoxHeight,
+        'frameSource': frameSource,
+        'frameWidth': frameWidth,
+        'frameHeight': frameHeight,
+        'previewWidth': previewWidth,
+        'previewHeight': previewHeight,
+        'cropSide': cropSide,
       };
       await _appendLine(_cropFileName, entry);
     } catch (e) {

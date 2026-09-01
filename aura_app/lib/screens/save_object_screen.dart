@@ -10,6 +10,7 @@ import 'package:image/image.dart' as img;
 import '../models/saved_object.dart';
 import '../services/app_settings.dart';
 import '../services/backend_service.dart';
+import '../services/camera_frame_converter.dart';
 import '../services/detection_crop.dart';
 import '../services/embedding_service.dart';
 import '../services/google_auth_service.dart';
@@ -56,6 +57,12 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
   CameraController? _camera;
   bool _cameraReady = false;
   String? _cameraError;
+
+  /// Último frame recibido del stream del preview. Es exactamente lo que el
+  /// usuario está viendo en pantalla, así que recortarlo con el marco guía
+  /// sí corresponde a lo que encuadró (ver _initCamera).
+  CameraImage? _lastFrame;
+  bool _streamActive = false;
 
   // Estado
   bool _modelLoaded = false;
@@ -129,15 +136,6 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       } catch (e) {
         debugPrint('No se pudo forzar flash apagado: $e');
       }
-      // Fija la orientación de la captura a la que tiene el teléfono al
-      // abrir la pantalla, para que la foto no cambie de orientación según
-      // cómo se sostenga el equipo — el recorte del marco guía depende de
-      // que la foto y lo que se ve en pantalla coincidan.
-      try {
-        await controller.lockCaptureOrientation();
-      } catch (e) {
-        debugPrint('No se pudo fijar la orientación de captura: $e');
-      }
       if (!mounted) {
         await controller.dispose();
         return;
@@ -146,6 +144,26 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         _camera = controller;
         _cameraReady = true;
       });
+
+      // Se abre el stream del preview y se guarda SOLO la referencia al
+      // último frame (no se procesa nada acá: es barato). Ese frame es el
+      // que se usa al capturar, en vez de takePicture().
+      //
+      // Motivo: en Android el preview y takePicture() son dos streams
+      // distintos del sensor, y la foto suele tener un campo de visión más
+      // ancho que el preview. Con el blister entero dentro del marco en
+      // pantalla, en la foto ocupaba ~57% del ancho mientras el recorte
+      // cubría ~43%, y se cortaba por los dos lados. Tomando el frame del
+      // mismo stream que alimenta el preview, el marco guía deja de ser una
+      // estimación sobre dos geometrías distintas.
+      try {
+        await controller.startImageStream((frame) => _lastFrame = frame);
+        _streamActive = true;
+      } catch (e) {
+        // startImageStream no está soportado en web/desktop — ahí se sigue
+        // usando takePicture() como fallback (ver _captureEmbedding).
+        debugPrint('startImageStream no disponible, se usará takePicture: $e');
+      }
     } catch (e) {
       if (mounted) setState(() => _cameraError = 'Error de cámara: $e');
     }
@@ -154,6 +172,10 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
   @override
   void dispose() {
     _voice.stop();
+    if (_streamActive) {
+      try { _camera?.stopImageStream(); } catch (_) {}
+      _streamActive = false;
+    }
     _camera?.dispose();
     _embeddings.dispose();
     _audio.stop();
@@ -316,20 +338,29 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     await Future.delayed(const Duration(milliseconds: 600));
     if (!_cameraReady || _camera == null) return const [];
     try {
-      final xfile = await _camera!.takePicture();
-
-      // Feedback en el INSTANTE del obturador. Antes el único háptico estaba
+      // Feedback en el INSTANTE de la captura. Antes el único háptico estaba
       // al final de todo el guardado, así que un usuario que no ve la
       // pantalla no tenía forma de saber cuándo se tomó la foto (ni si ya se
       // había tomado): movía el objeto creyendo que todavía no había
-      // disparado. El háptico marca el disparo y la voz avisa que ahora sí
+      // disparado. El háptico marca la captura y la voz avisa que ahora sí
       // puede bajar la mano mientras se procesa.
       unawaited(_audio.haptic(120));
       unawaited(_audio.speak('Listo. Procesando.'));
       if (mounted) setState(() => _isProcessing = true);
 
-      final bytes = await xfile.readAsBytes();
-      final decoded = img.decodeImage(bytes);
+      // El frame del stream del preview es lo que el usuario tiene delante:
+      // mismo campo de visión, misma escala. takePicture() queda solo como
+      // fallback donde el stream no está soportado (web/desktop).
+      img.Image? decoded;
+      final frame = _lastFrame;
+      if (_streamActive && frame != null) {
+        decoded = await CameraFrameConverter.toDisplayImage(frame, _camera!);
+      }
+      if (decoded == null) {
+        final xfile = await _camera!.takePicture();
+        final bytes = await xfile.readAsBytes();
+        decoded = img.decodeImage(bytes);
+      }
       if (decoded == null) return const [];
 
       // Recorte determinístico al marco guía CUADRADO que se le mostró al
@@ -377,10 +408,20 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       // del lag que el usuario reportaba entre tocar el botón y tener el
       // objeto guardado.
       // ignore: discarded_futures
+      // Se registran las dimensiones reales para no tener que volver a
+      // deducir la geometría a partir de una foto: si el recorte vuelve a no
+      // corresponder al marco, estos números dicen dónde está el desfase.
+      final previewSize = _camera!.value.previewSize;
       MetricsLogger.instance.logCropSelection(
         screen: 'save_object',
         objectLabel: _nameController.text.trim(),
         cropMethod: cropMethod,
+        frameSource: _streamActive && _lastFrame != null ? 'preview_stream' : 'take_picture',
+        frameWidth: oriented.width,
+        frameHeight: oriented.height,
+        previewWidth: previewSize?.width.round(),
+        previewHeight: previewSize?.height.round(),
+        cropSide: toEmbed.width,
       );
 
       // Guardar el recorte real (antes de normalizar) para el visor
@@ -524,12 +565,23 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     if (!_cameraReady || _camera == null) {
       return _buildCameraPlaceholder('Iniciando cámara...');
     }
-    return AspectRatio(
-      aspectRatio: _camera!.value.aspectRatio,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: Stack(
-          fit: StackFit.expand,
+    // Sin `AspectRatio` externo y sin `StackFit.expand`: antes el preview se
+    // metía a la fuerza en una caja con `_camera.value.aspectRatio` (la
+    // relación APAISADA del sensor), mientras que `CameraPreview` en camera
+    // 0.10.x quiere `1 / value.aspectRatio` cuando el teléfono está vertical.
+    // Forzado a llenar esa caja, el preview se estiraba horizontalmente, así
+    // que un cuadrado dibujado en pantalla ni siquiera correspondía a un
+    // cuadrado del frame.
+    //
+    // Ahora el `Stack` se dimensiona según `CameraPreview` (que elige su
+    // propia relación de aspecto, sin deformarse) y `Positioned.fill` hace
+    // que el marco cubra exactamente esa área. Entre el preview y el frame
+    // solo queda un escalado uniforme, así que el cuadrado de
+    // `0.6 * min(ancho, alto)` en pantalla ES el mismo `0.6 * min(ancho,
+    // alto)` que recorta cropToGuideSquare.
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: Stack(
           children: [
             CameraPreview(_camera!),
             // Marco guía: el recorte que se guarda es EXACTAMENTE esta
@@ -541,38 +593,35 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
             // (confirmado con datos reales: eligió "teclado" y luego
             // "laptop" en vez de la pastilla que se quería guardar).
             // El marco es CUADRADO (lado = 60% del lado más corto del
-            // preview), no un 60%x60% del ancho y del alto. Tiene que
-            // coincidir exactamente con lo que recorta cropToGuideSquare:
-            // un cuadrado centrado es la única forma de que la región del
-            // marco y la región recortada sean la misma aunque la foto
-            // capturada y el preview no coincidan en orientación o relación
-            // de aspecto (ver detection_crop.dart).
-            IgnorePointer(
-              child: Center(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final side = kGuideFrameFraction *
-                        math.min(constraints.maxWidth, constraints.maxHeight);
-                    return Semantics(
-                      label: 'Marco guía: coloca el objeto dentro de este recuadro',
-                      child: SizedBox(
-                        width: side,
-                        height: side,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.white, width: 3),
-                            borderRadius: BorderRadius.circular(12),
+            // preview), no un 60%x60% del ancho y del alto — tiene que
+            // coincidir exactamente con lo que recorta cropToGuideSquare.
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Center(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final side = kGuideFrameFraction *
+                          math.min(constraints.maxWidth, constraints.maxHeight);
+                      return Semantics(
+                        label: 'Marco guía: coloca el objeto dentro de este recuadro',
+                        child: SizedBox(
+                          width: side,
+                          height: side,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.white, width: 3),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
               ),
             ),
           ],
         ),
-      ),
     );
   }
 
