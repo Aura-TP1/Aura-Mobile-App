@@ -63,13 +63,13 @@ class OrbMatcher {
   /// con banco, subieron a 300.
   static const List<double> kBankScales = [0.6, 0.8, 1.0, 1.3];
 
-  /// Extrae descriptores ORB de [image]. Devuelve `null` si no encuentra
-  /// suficientes esquinas (imagen plana, borrosa o demasiado chica).
   /// Keypoints usados al BUSCAR. Menos que al guardar: el costo del matching
   /// es (descriptores del banco x descriptores del frame), y esto corre en
   /// cada ciclo del bucle de búsqueda junto con la inferencia de MobileNetV2.
   static const int kQueryKeypoints = 150;
 
+  /// Extrae descriptores ORB de [image]. Devuelve `null` si no encuentra
+  /// suficientes esquinas (imagen plana, borrosa o demasiado chica).
   static Uint8List? extract(img.Image image, {int maxKeypoints = 200}) {
     try {
       final w = image.width;
@@ -185,13 +185,16 @@ class OrbMatcher {
   // ── Internos ────────────────────────────────────────────────────────────
 
   static Uint8List _toGray(img.Image image, int w, int h) {
+    // Lectura directa del buffer RGB en vez de getPixel(): esto corre en cada
+    // frame de la búsqueda y getPixel asigna un objeto Pixel por llamada
+    // (mismo motivo documentado en object_detector_native.dart).
+    final bytes = image.getBytes(order: img.ChannelOrder.rgb);
     final gray = Uint8List(w * h);
-    for (var y = 0; y < h; y++) {
-      for (var x = 0; x < w; x++) {
-        final p = image.getPixel(x, y);
-        gray[y * w + x] =
-            (0.299 * p.r + 0.587 * p.g + 0.114 * p.b).round().clamp(0, 255).toInt();
-      }
+    for (var i = 0, j = 0; i < gray.length; i++, j += 3) {
+      gray[i] = (0.299 * bytes[j] + 0.587 * bytes[j + 1] + 0.114 * bytes[j + 2])
+          .round()
+          .clamp(0, 255)
+          .toInt();
     }
     return gray;
   }

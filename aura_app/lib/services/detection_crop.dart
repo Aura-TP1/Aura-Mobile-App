@@ -39,6 +39,17 @@ img.Image centerCrop(img.Image image, {double fraction = 0.65}) {
 /// esta misma geometría (ver [cropToGuideSquare]).
 const double kGuideFrameFraction = 0.6;
 
+/// Lado (px) al que se reduce el recorte del marco guía para todo el trabajo
+/// por píxel posterior: nitidez, gris de ORB, blur, FAST, descriptores.
+///
+/// La cámara se pide a alta resolución porque lo que importa es cuántos
+/// píxeles REALES caen sobre el objeto (medido: a 110 px de ancho el matching
+/// da ruido, a 260-360 px funciona). Pero procesar el recorte a 648 px cuando
+/// con ~400 alcanza multiplicaría por 2.6 cada pasada, en cada frame. Se
+/// submuestrea durante la conversión YUV, así que reducir no cuesta nada
+/// aparte.
+const int kWorkingGuideSide = 400;
+
 /// Recorta el CUADRADO centrado que corresponde al marco guía que el usuario
 /// ve en pantalla.
 ///
@@ -147,8 +158,16 @@ img.Image drawGuideSquareOverlay(img.Image photo, {double fraction = kGuideFrame
   return canvas;
 }
 
-/// Nitidez mínima que debe tener un recorte para que valga la pena
-/// compararlo. Ver [imageSharpness] para el porqué del número.
+/// Nitidez de referencia, SOLO INFORMATIVA por ahora: no bloquea guardar ni
+/// descarta frames al buscar.
+///
+/// Salió de medir imágenes de prueba, pero la varianza del Laplaciano depende
+/// de la resolución y del procesamiento del ISP de cada teléfono, así que este
+/// número no es trasladable a ciegas. Filtrar con un umbral sin calibrar tenía
+/// un riesgo asimétrico: si el valor real del dispositivo quedara por debajo,
+/// no se podría guardar NINGÚN objeto y la búsqueda descartaría todos los
+/// frames. El valor medido se registra en `crop_metrics.jsonl` y
+/// `search_metrics.jsonl`; el umbral real se fija con esos datos.
 const double kMinSharpness = 45.0;
 
 /// Mide la nitidez de [image] como la VARIANZA DEL LAPLACIANO: cuánta
@@ -185,12 +204,14 @@ double imageSharpness(img.Image image) {
     final h = image.height;
     if (w < 3 || h < 3) return 0;
 
+    // Lectura directa del buffer RGB en vez de getPixel(): a 1080p el recorte
+    // ronda los 420 000 píxeles y getPixel asigna un objeto Pixel por llamada.
+    // Es el mismo patrón que ya usa object_detector_native.dart para evitar
+    // "~100k llamadas a getPixel() por frame".
+    final bytes = image.getBytes(order: img.ChannelOrder.rgb);
     final gray = Float32List(w * h);
-    for (var y = 0; y < h; y++) {
-      for (var x = 0; x < w; x++) {
-        final p = image.getPixel(x, y);
-        gray[y * w + x] = 0.299 * p.r + 0.587 * p.g + 0.114 * p.b;
-      }
+    for (var i = 0, j = 0; i < gray.length; i++, j += 3) {
+      gray[i] = 0.299 * bytes[j] + 0.587 * bytes[j + 1] + 0.114 * bytes[j + 2];
     }
 
     var sum = 0.0;

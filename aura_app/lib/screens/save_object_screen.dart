@@ -140,13 +140,41 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       final c = CameraController(cam, preset, enableAudio: false);
       try {
         await c.initialize();
+        // El stream se arranca ACÁ, dentro del intento del preset. Antes se
+        // arrancaba después: si `startImageStream` fallaba (pasa en varios
+        // Android a 1080p), `_streamActive` quedaba en false y el código caía
+        // en silencio a takePicture(), que es la fuente con distinto campo de
+        // visión — se desharía sin aviso el fix de geometría del marco guía.
+        // Ahora un fallo del stream degrada el preset, igual que un fallo de
+        // initialize.
+        await c.startImageStream((frame) => _lastFrame = frame);
+        _streamActive = true;
         _activePreset = preset.name;
-        debugPrint('[save_object] Cámara en ${preset.name}');
+        debugPrint('[save_object] Cámara en ${preset.name} (stream activo)');
         return c;
       } catch (e) {
-        debugPrint('[save_object] ${preset.name} no soportado: $e');
+        debugPrint('[save_object] ${preset.name} no sirvió: $e');
+        try { await c.stopImageStream(); } catch (_) {}
         try { await c.dispose(); } catch (_) {}
+        _streamActive = false;
       }
+    }
+
+    // Último recurso: abrir la cámara SIN stream. Solo para plataformas donde
+    // `startImageStream` no existe (escritorio); si no estuviera, exigir
+    // stream dejaría la cámara sin arrancar del todo. Acá se vuelve a usar
+    // takePicture(), con el desfase de campo de visión conocido, así que
+    // queda marcado en las métricas para poder distinguir esas corridas.
+    final c = CameraController(cam, ResolutionPreset.medium, enableAudio: false);
+    try {
+      await c.initialize();
+      _streamActive = false;
+      _activePreset = 'medium_sin_stream';
+      debugPrint('[save_object] Sin stream disponible; se usará takePicture');
+      return c;
+    } catch (e) {
+      debugPrint('[save_object] No se pudo abrir la cámara: $e');
+      try { await c.dispose(); } catch (_) {}
     }
     return null;
   }
@@ -198,26 +226,6 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         _camera = controller;
         _cameraReady = true;
       });
-
-      // Se abre el stream del preview y se guarda SOLO la referencia al
-      // último frame (no se procesa nada acá: es barato). Ese frame es el
-      // que se usa al capturar, en vez de takePicture().
-      //
-      // Motivo: en Android el preview y takePicture() son dos streams
-      // distintos del sensor, y la foto suele tener un campo de visión más
-      // ancho que el preview. Con el blister entero dentro del marco en
-      // pantalla, en la foto ocupaba ~57% del ancho mientras el recorte
-      // cubría ~43%, y se cortaba por los dos lados. Tomando el frame del
-      // mismo stream que alimenta el preview, el marco guía deja de ser una
-      // estimación sobre dos geometrías distintas.
-      try {
-        await controller.startImageStream((frame) => _lastFrame = frame);
-        _streamActive = true;
-      } catch (e) {
-        // startImageStream no está soportado en web/desktop — ahí se sigue
-        // usando takePicture() como fallback (ver _captureEmbedding).
-        debugPrint('startImageStream no disponible, se usará takePicture: $e');
-      }
     } catch (e) {
       if (mounted) setState(() => _cameraError = 'Error de cámara: $e');
     }
@@ -308,16 +316,13 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
          // (original + rotaciones + espejo) generados de esa única foto.
          embeddings = await _captureEmbedding();
          if (embeddings.isEmpty) {
-           // Distinguir "salió borrosa" de un fallo genérico: es accionable
-           // (acercarse, sostener firme) y es la causa más común de que un
-           // objeto guardado después no se encuentre nunca.
-           final msg = _blurryCapture
-               ? 'Se ve borroso. Acerca la cámara hasta llenar el recuadro y mantén firme.'
-               : 'No pude capturar la foto. Intenta de nuevo.';
+           const msg = 'No pude capturar la foto. Intenta de nuevo.';
            await _audio.speak(msg);
            if (mounted) {
              setState(() => _isSaving = false);
-             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+             ScaffoldMessenger.of(context).showSnackBar(
+               const SnackBar(content: Text(msg)),
+             );
            }
            return;
          }
@@ -355,7 +360,14 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
        }
 
        await _audio.haptic(200); // confirmación háptica
-       await _audio.speak('Guardé $name.');
+       // Aviso, no bloqueo: el objeto ya quedó guardado. Si salió con poca
+       // nitidez conviene rehacerlo, porque es lo que más degrada el
+       // reconocimiento posterior — pero la decisión queda en el usuario, no
+       // en un umbral sin calibrar.
+       await _audio.speak(_blurryCapture
+           ? 'Guardé $name, pero se veía borroso. Si no lo encuentra después, '
+               'vuelve a guardarlo acercando la cámara hasta llenar el recuadro.'
+           : 'Guardé $name.');
        if (!mounted) return;
        Navigator.of(context).pop(true);
      } catch (e) {
@@ -422,6 +434,11 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
           frame,
           _camera!,
           centerCropFraction: 1.0,
+          // Acá se convierte el cuadrado del lado corto, y después
+          // cropToGuideSquare toma el 60% de eso. Para que el recorte guía
+          // termine en kWorkingGuideSide hay que pedir ese tamaño dividido por
+          // la fracción del marco.
+          maxOutputSide: (kWorkingGuideSide / kGuideFrameFraction).round(),
         );
       }
       if (decoded == null) {
@@ -454,19 +471,20 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       var toEmbed = cropToGuideSquare(oriented);
       var cropMethod = 'guide_frame';
 
-      // Rechazar la captura si está borrosa. Una foto borrosa al guardar
-      // envenena el objeto para siempre: el matching por puntos clave se cae
-      // a cero con menos de 2 px de desenfoque (ver imageSharpness), y hasta
-      // ahora no había nada que lo impidiera. Con un cuidador vidente
-      // haciendo el enrolamiento, "acércate y mantén firme" es una
-      // instrucción que sí se puede seguir.
+      // Nitidez del recorte. Se MIDE y se registra, pero NO bloquea el
+      // guardado: el umbral de referencia se calibró sobre imágenes de
+      // prueba, y la varianza del Laplaciano depende de la resolución y del
+      // procesamiento del ISP de cada teléfono. Bloquear con un número sin
+      // calibrar tenía un riesgo asimétrico y grave: si el valor real de este
+      // dispositivo queda por debajo del umbral, NINGÚN objeto se podría
+      // guardar nunca. Primero se juntan valores reales (quedan en
+      // crop_metrics.jsonl y en search_metrics.jsonl), después se fija el
+      // umbral.
       final sharpness = imageSharpness(toEmbed);
-      if (sharpness < kMinSharpness) {
-        debugPrint('[save_object] Captura borrosa: nitidez $sharpness < $kMinSharpness');
-        _blurryCapture = true;
-        return const [];
+      _blurryCapture = sharpness < kMinSharpness;
+      if (_blurryCapture) {
+        debugPrint('[save_object] Nitidez baja: $sharpness < $kMinSharpness (se guarda igual)');
       }
-      _blurryCapture = false;
 
       // Sobre el recorte del marco guía, intentar ceñir aún más al objeto
       // con segmentación de primer plano sin clases (watershed): el marco

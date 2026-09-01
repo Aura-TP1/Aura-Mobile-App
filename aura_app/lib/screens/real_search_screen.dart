@@ -139,13 +139,41 @@ class _RealSearchScreenState extends State<RealSearchScreen>
       final c = CameraController(cam, preset, enableAudio: false);
       try {
         await c.initialize();
+        // El stream se arranca ACÁ, dentro del intento del preset. Antes se
+        // arrancaba después: si `startImageStream` fallaba (pasa en varios
+        // Android a 1080p), `_streamActive` quedaba en false y el código caía
+        // en silencio a takePicture(), que es la fuente con distinto campo de
+        // visión — se desharía sin aviso el fix de geometría del marco guía.
+        // Ahora un fallo del stream degrada el preset, igual que un fallo de
+        // initialize.
+        await c.startImageStream((frame) => _lastFrame = frame);
+        _streamActive = true;
         _activePreset = preset.name;
-        debugPrint('[real_search] Cámara en ${preset.name}');
+        debugPrint('[real_search] Cámara en ${preset.name} (stream activo)');
         return c;
       } catch (e) {
-        debugPrint('[real_search] ${preset.name} no soportado: $e');
+        debugPrint('[real_search] ${preset.name} no sirvió: $e');
+        try { await c.stopImageStream(); } catch (_) {}
         try { await c.dispose(); } catch (_) {}
+        _streamActive = false;
       }
+    }
+
+    // Último recurso: abrir la cámara SIN stream. Solo para plataformas donde
+    // `startImageStream` no existe (escritorio); si no estuviera, exigir
+    // stream dejaría la cámara sin arrancar del todo. Acá se vuelve a usar
+    // takePicture(), con el desfase de campo de visión conocido, así que
+    // queda marcado en las métricas para poder distinguir esas corridas.
+    final c = CameraController(cam, ResolutionPreset.medium, enableAudio: false);
+    try {
+      await c.initialize();
+      _streamActive = false;
+      _activePreset = 'medium_sin_stream';
+      debugPrint('[real_search] Sin stream disponible; se usará takePicture');
+      return c;
+    } catch (e) {
+      debugPrint('[real_search] No se pudo abrir la cámara: $e');
+      try { await c.dispose(); } catch (_) {}
     }
     return null;
   }
@@ -190,19 +218,6 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         _camera = controller;
         _cameraReady = true;
       });
-
-      // El bucle de escaneo consume el último frame del stream del preview en
-      // vez de llamar takePicture() varias veces por segundo. Además de ser
-      // mucho más liviano y no hacer sonar el obturador, es la única fuente
-      // que muestra exactamente lo mismo que el marco guía en pantalla — al
-      // guardar se hace igual (ver save_object_screen.dart y
-      // camera_frame_converter.dart).
-      try {
-        await controller.startImageStream((frame) => _lastFrame = frame);
-        _streamActive = true;
-      } catch (e) {
-        debugPrint('startImageStream no disponible, se usará takePicture: $e');
-      }
     } catch (e) {
       if (mounted) setState(() => _cameraError = 'Error de cámara: $e');
       debugPrint('RealSearchScreen camera error: $e');
@@ -255,6 +270,7 @@ class _RealSearchScreenState extends State<RealSearchScreen>
             frame,
             c,
             centerCropFraction: kGuideFrameFraction,
+            maxOutputSide: kWorkingGuideSide,
           );
         }
         if (image == null && !_streamActive) {
@@ -282,15 +298,13 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         var toEmbed = _streamActive ? image : cropToGuideSquare(image);
         var cropMethod = 'guide_frame';
 
-        // Saltear frames borrosos en vez de compararlos: con menos de 2 px de
-        // desenfoque el matching por puntos clave cae a cero (ver
-        // imageSharpness), así que compararlos solo gasta CPU y ensucia las
-        // métricas. Además ahorra la inferencia de MobileNetV2 del frame.
+        // Se MIDE la nitidez y se registra en las métricas, pero NO se
+        // descarta el frame por eso. El umbral está sin calibrar para este
+        // dispositivo (la varianza del Laplaciano depende de la resolución y
+        // del ISP), y si el valor real quedara por debajo se descartarían
+        // TODOS los frames: la búsqueda no encontraría nunca nada y parecería
+        // rota. Primero se juntan valores reales, después se filtra.
         final sharpness = imageSharpness(toEmbed);
-        if (sharpness < kMinSharpness) {
-          await Future.delayed(_frameInterval);
-          continue;
-        }
         if (AppSettings.instance.useWatershedSegmentation) {
           final segmented = segmentForeground(toEmbed);
           if (segmented != null) {
