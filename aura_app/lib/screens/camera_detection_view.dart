@@ -384,7 +384,7 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
       if (_slowFrameCount >= 3) {
         final newMs = (_adaptiveFrameInterval.inMilliseconds + 100).clamp(
           _minFrameInterval.inMilliseconds, 500,
-        );
+        ).toInt();
         _adaptiveFrameInterval = Duration(milliseconds: newMs);
         _slowFrameCount = 0;
       }
@@ -394,7 +394,7 @@ class _CameraDetectionViewState extends State<CameraDetectionView>
       if (_adaptiveFrameInterval > _minFrameInterval) {
         final newMs = (_adaptiveFrameInterval.inMilliseconds - 50).clamp(
           _minFrameInterval.inMilliseconds, 500,
-        );
+        ).toInt();
         _adaptiveFrameInterval = Duration(milliseconds: newMs);
       }
     }
@@ -1129,9 +1129,9 @@ Uint8List _yuv420ToRgb(_YuvConversionArgs a) {
       final uvIdx = (y >> 1) * a.uvStride + (x >> 1) * a.uvPixelStride;
       final uu = a.uBytes[uvIdx] - 128;
       final vv = a.vBytes[uvIdx] - 128;
-      rgb[idx++] = ((298 * yy + 409 * vv + 128) >> 8).clamp(0, 255);
-      rgb[idx++] = ((298 * yy - 100 * uu - 208 * vv + 128) >> 8).clamp(0, 255);
-      rgb[idx++] = ((298 * yy + 516 * uu + 128) >> 8).clamp(0, 255);
+      rgb[idx++] = ((298 * yy + 409 * vv + 128) >> 8).clamp(0, 255).toInt();
+      rgb[idx++] = ((298 * yy - 100 * uu - 208 * vv + 128) >> 8).clamp(0, 255).toInt();
+      rgb[idx++] = ((298 * yy + 516 * uu + 128) >> 8).clamp(0, 255).toInt();
     }
   }
   return rgb;

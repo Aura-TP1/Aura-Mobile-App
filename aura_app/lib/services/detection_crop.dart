@@ -25,8 +25,10 @@ const double kCropConfThreshold = 0.15;
 img.Image centerCrop(img.Image image, {double fraction = 0.65}) {
   final w = image.width;
   final h = image.height;
-  final cropW = (w * fraction).round().clamp(1, w);
-  final cropH = (h * fraction).round().clamp(1, h);
+  // `.clamp()` sobre un int devuelve `num`, no `int` — sin el `.toInt()`
+  // esto no compila contra `img.copyCrop`, que exige `int` en width/height.
+  final cropW = (w * fraction).round().clamp(1, w).toInt();
+  final cropH = (h * fraction).round().clamp(1, h).toInt();
   final x = ((w - cropW) / 2).round();
   final y = ((h - cropH) / 2).round();
   return img.copyCrop(image, x: x, y: y, width: cropW, height: cropH);
@@ -65,9 +67,13 @@ const double kGuideFrameFraction = 0.6;
 /// pantalla (ver `save_object_screen.dart` / `real_search_screen.dart`).
 img.Image cropToGuideSquare(img.Image photo, {double fraction = kGuideFrameFraction}) {
   final oriented = bakePhotoOrientation(photo);
+  // `.clamp()` sobre un int devuelve `num`, no `int` (firma de la stdlib) —
+  // sin el `.toInt()` esto no compila contra `img.copyCrop`, que exige un
+  // `int` real para `width`/`height`.
   final side = (math.min(oriented.width, oriented.height) * fraction)
       .round()
-      .clamp(1, math.min(oriented.width, oriented.height));
+      .clamp(1, math.min(oriented.width, oriented.height))
+      .toInt();
   final x = ((oriented.width - side) / 2).round();
   final y = ((oriented.height - side) / 2).round();
   return img.copyCrop(oriented, x: x, y: y, width: side, height: side);
@@ -369,7 +375,9 @@ img.Image? segmentForeground(img.Image image, {int workSize = 160}) {
     final buckets = List<List<int>>.generate(256, (_) => <int>[]);
     for (var i = 0; i < ww * wh; i++) {
       if (labels[i] != unassigned) {
-        final level = (grad[i] / maxGrad * 255).round().clamp(0, 255);
+        // `.toInt()` por el mismo motivo que en cropToGuideSquare/centerCrop:
+        // `.clamp()` devuelve `num`, y `buckets[level]` exige un índice `int`.
+        final level = (grad[i] / maxGrad * 255).round().clamp(0, 255).toInt();
         buckets[level].add(i);
       }
     }
@@ -390,7 +398,7 @@ img.Image? segmentForeground(img.Image image, {int workSize = 160}) {
           final nIdx = n[1] * ww + n[0];
           if (labels[nIdx] == unassigned) {
             labels[nIdx] = label;
-            final nLevel = (grad[nIdx] / maxGrad * 255).round().clamp(0, 255);
+            final nLevel = (grad[nIdx] / maxGrad * 255).round().clamp(0, 255).toInt();
             if (nLevel <= level) {
               queue.add(nIdx);
             } else {
@@ -457,8 +465,10 @@ img.Image? segmentForeground(img.Image image, {int workSize = 160}) {
 
 double _sobelX(Float32List gray, int x, int y, int w, int h) {
   double v(int dx, int dy) {
-    final xx = (x + dx).clamp(0, w - 1);
-    final yy = (y + dy).clamp(0, h - 1);
+    // `.toInt()` por el mismo motivo que en los demás clamp de este archivo:
+    // `Float32List` exige un índice `int`, y `.clamp()` devuelve `num`.
+    final xx = (x + dx).clamp(0, w - 1).toInt();
+    final yy = (y + dy).clamp(0, h - 1).toInt();
     return gray[yy * w + xx];
   }
   return (v(1, -1) + 2 * v(1, 0) + v(1, 1)) - (v(-1, -1) + 2 * v(-1, 0) + v(-1, 1));
@@ -466,8 +476,10 @@ double _sobelX(Float32List gray, int x, int y, int w, int h) {
 
 double _sobelY(Float32List gray, int x, int y, int w, int h) {
   double v(int dx, int dy) {
-    final xx = (x + dx).clamp(0, w - 1);
-    final yy = (y + dy).clamp(0, h - 1);
+    // `.toInt()` por el mismo motivo que en los demás clamp de este archivo:
+    // `Float32List` exige un índice `int`, y `.clamp()` devuelve `num`.
+    final xx = (x + dx).clamp(0, w - 1).toInt();
+    final yy = (y + dy).clamp(0, h - 1).toInt();
     return gray[yy * w + xx];
   }
   return (v(-1, 1) + 2 * v(0, 1) + v(1, 1)) - (v(-1, -1) + 2 * v(0, -1) + v(1, -1));

@@ -155,7 +155,7 @@ class AppSettings extends ChangeNotifier {
       Duration(milliseconds: ttsRepeatCooldownMs.clamp(500, 10000).round());
 
   /// Velocidad efectiva para `flutter_tts`, derivada de [voiceSpeed].
-  double get ttsRate => (_baseRate * voiceSpeed).clamp(0.2, 1.0);
+  double get ttsRate => (_baseRate * voiceSpeed).clamp(0.2, 1.0).toDouble();
 
   Future<void> setVoiceSpeed(double value) async {
     voiceSpeed = value;

@@ -283,7 +283,7 @@ class MetricsLogger {
     final lines = (await file.readAsLines())
         .where((l) => l.trim().isNotEmpty)
         .toList();
-    final start = (lines.length - maxLines).clamp(0, lines.length);
+    final start = (lines.length - maxLines).clamp(0, lines.length).toInt();
     return lines.sublist(start).reversed.toList();
   }
 

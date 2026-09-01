@@ -569,7 +569,9 @@ class _RealSearchScreenState extends State<RealSearchScreen>
   }
 
   Widget _buildSimilarityBar() {
-    final pct = (_currentSimilarity / _threshold).clamp(0.0, 1.0);
+    // `.toDouble()`: `.clamp()` devuelve `num`, y `LinearProgressIndicator.value`
+    // más abajo exige `double?` — mismo gotcha que en detection_crop.dart.
+    final pct = (_currentSimilarity / _threshold).clamp(0.0, 1.0).toDouble();
     final isClose = pct > 0.85;
     final color = isClose ? _kAuraGreen : _kAuraRed;
     final pctInt = (_currentSimilarity * 100).toStringAsFixed(0);

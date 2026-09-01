@@ -164,7 +164,8 @@ class EmbeddingService {
       final normalized = bytes[i] / 255.0;
       final q = (normalized / _inputScale + _inputZeroPoint)
           .round()
-          .clamp(-128, 127);
+          .clamp(-128, 127)
+          .toInt();
       inputBuffer[i] = q;
     }
 
