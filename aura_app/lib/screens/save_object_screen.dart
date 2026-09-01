@@ -66,6 +66,13 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
   CameraImage? _lastFrame;
   bool _streamActive = false;
 
+  /// Resolución con la que finalmente arrancó la cámara, para las métricas.
+  String _activePreset = '';
+
+  /// `true` si la última captura se rechazó por borrosa, para poder dar un
+  /// mensaje accionable en vez de un "no pude capturar" genérico.
+  bool _blurryCapture = false;
+
   /// Banco de descriptores ORB del último recorte capturado, para guardarlo
   /// junto al objeto (ver orb_matcher.dart).
   List<Uint8List> _lastOrbBank = const [];
@@ -110,7 +117,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     // nada.
     unawaited(_audio.speak(kIsWeb
         ? 'Guardar objeto. Escribe o dicta el nombre.'
-        : 'Apunta la cámara al objeto, colócalo dentro del marco, y di o escribe el nombre.'));
+        : 'Acerca la cámara hasta que el objeto llene el recuadro, y di o escribe el nombre.'));
     if (!kIsWeb) {
       await Future.wait([
         _initCamera(),
@@ -120,6 +127,30 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
     }
   }
 
+  /// Intenta abrir la cámara con la mayor resolución posible, degradando si
+  /// el equipo no la soporta. El objetivo son teléfonos de gama baja: pedir
+  /// 1080p y que reviente el arranque de la cámara sería peor que perder
+  /// detalle.
+  Future<CameraController?> _createController(CameraDescription cam) async {
+    for (final preset in const [
+      ResolutionPreset.veryHigh,
+      ResolutionPreset.high,
+      ResolutionPreset.medium,
+    ]) {
+      final c = CameraController(cam, preset, enableAudio: false);
+      try {
+        await c.initialize();
+        _activePreset = preset.name;
+        debugPrint('[save_object] Cámara en ${preset.name}');
+        return c;
+      } catch (e) {
+        debugPrint('[save_object] ${preset.name} no soportado: $e');
+        try { await c.dispose(); } catch (_) {}
+      }
+    }
+    return null;
+  }
+
   Future<void> _initCamera() async {
     try {
       final cams = await availableCameras();
@@ -127,12 +158,21 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         if (mounted) setState(() => _cameraError = 'No se encontró cámara.');
         return;
       }
-      final controller = CameraController(
-        cams.first,
-        ResolutionPreset.medium,
-        enableAudio: false,
-      );
-      await controller.initialize();
+      // Resolución ALTA a propósito, con degradación si el equipo no puede.
+      // Medido sobre la foto real del blister: con el objeto a ~110 px de
+      // ancho (lo que daba `medium`: lado corto 480 → cuadrado guía 288 → el
+      // objeto ocupa ~40% de eso) el matching por puntos clave daba 3
+      // coincidencias, que es ruido — y coincide con los orbMatches de 0-7
+      // medidos en el teléfono. A 260-360 px sube a 37-43. Sin píxeles
+      // suficientes sobre el objeto, ningún matcher funciona.
+      //
+      // El costo de convertir el frame NO sube con la resolución porque solo
+      // se convierte el cuadrado guía (ver camera_frame_converter.dart).
+      final controller = await _createController(cams.first);
+      if (controller == null) {
+        if (mounted) setState(() => _cameraError = 'No se pudo iniciar la cámara.');
+        return;
+      }
       // Sin esto, algunos Android disparan el flash automático en poca luz al
       // llamar takePicture() — el plugin no fija FlashMode por defecto. Al
       // usuario le aparecía el flash de la nada al guardar un objeto. Mismo
@@ -141,6 +181,14 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         await controller.setFlashMode(FlashMode.off);
       } catch (e) {
         debugPrint('No se pudo forzar flash apagado: $e');
+      }
+      // Con el objeto cerca, el autofoco continuo "caza" y buena parte de los
+      // frames salen blandos — y una captura borrosa envenena el objeto
+      // guardado para siempre (ver imageSharpness).
+      try {
+        await controller.setFocusMode(FocusMode.auto);
+      } catch (e) {
+        debugPrint('No se pudo fijar el modo de enfoque: $e');
       }
       if (!mounted) {
         await controller.dispose();
@@ -260,12 +308,16 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
          // (original + rotaciones + espejo) generados de esa única foto.
          embeddings = await _captureEmbedding();
          if (embeddings.isEmpty) {
-           await _audio.speak('No pude capturar la foto. Intenta de nuevo.');
+           // Distinguir "salió borrosa" de un fallo genérico: es accionable
+           // (acercarse, sostener firme) y es la causa más común de que un
+           // objeto guardado después no se encuentre nunca.
+           final msg = _blurryCapture
+               ? 'Se ve borroso. Acerca la cámara hasta llenar el recuadro y mantén firme.'
+               : 'No pude capturar la foto. Intenta de nuevo.';
+           await _audio.speak(msg);
            if (mounted) {
              setState(() => _isSaving = false);
-             ScaffoldMessenger.of(context).showSnackBar(
-               const SnackBar(content: Text('No se pudo capturar la foto. Intenta de nuevo.')),
-             );
+             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
            }
            return;
          }
@@ -361,7 +413,16 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       img.Image? decoded;
       final frame = _lastFrame;
       if (_streamActive && frame != null) {
-        decoded = await CameraFrameConverter.toDisplayImage(frame, _camera!);
+        // Se convierte el cuadrado centrado del lado corto (fracción 1.0), no
+        // el frame entero: alcanza para el recorte guía, para el overlay de
+        // depuración y para las variantes rotadas (cuyas esquinas caen dentro
+        // del círculo de radio 0.5*ladoCorto), y a 1080p ahorra casi la mitad
+        // del trabajo de conversión.
+        decoded = await CameraFrameConverter.toDisplayImage(
+          frame,
+          _camera!,
+          centerCropFraction: 1.0,
+        );
       }
       if (decoded == null) {
         final xfile = await _camera!.takePicture();
@@ -392,6 +453,20 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       final oriented = bakePhotoOrientation(decoded);
       var toEmbed = cropToGuideSquare(oriented);
       var cropMethod = 'guide_frame';
+
+      // Rechazar la captura si está borrosa. Una foto borrosa al guardar
+      // envenena el objeto para siempre: el matching por puntos clave se cae
+      // a cero con menos de 2 px de desenfoque (ver imageSharpness), y hasta
+      // ahora no había nada que lo impidiera. Con un cuidador vidente
+      // haciendo el enrolamiento, "acércate y mantén firme" es una
+      // instrucción que sí se puede seguir.
+      final sharpness = imageSharpness(toEmbed);
+      if (sharpness < kMinSharpness) {
+        debugPrint('[save_object] Captura borrosa: nitidez $sharpness < $kMinSharpness');
+        _blurryCapture = true;
+        return const [];
+      }
+      _blurryCapture = false;
 
       // Sobre el recorte del marco guía, intentar ceñir aún más al objeto
       // con segmentación de primer plano sin clases (watershed): el marco
@@ -429,6 +504,8 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         previewWidth: previewSize?.width.round(),
         previewHeight: previewSize?.height.round(),
         cropSide: toEmbed.width,
+        sharpness: sharpness,
+        resolutionPreset: _activePreset,
       );
 
       // Guardar el recorte real (antes de normalizar) para el visor
@@ -654,7 +731,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
                       final side = kGuideFrameFraction *
                           math.min(constraints.maxWidth, constraints.maxHeight);
                       return Semantics(
-                        label: 'Marco guía: coloca el objeto dentro de este recuadro',
+                        label: 'Marco guía: acerca la cámara hasta que el objeto llene el recuadro',
                         child: SizedBox(
                           width: side,
                           height: side,

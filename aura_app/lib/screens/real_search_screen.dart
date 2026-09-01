@@ -65,6 +65,9 @@ class _RealSearchScreenState extends State<RealSearchScreen>
   /// ve dentro del marco guía (ver _initCamera).
   CameraImage? _lastFrame;
   bool _streamActive = false;
+
+  /// Resolución con la que arrancó la cámara, para las métricas.
+  String _activePreset = '';
   double _currentSimilarity = 0;
 
   late final AnimationController _sweepController;
@@ -125,6 +128,28 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     }
   }
 
+  /// Abre la cámara con la mayor resolución que el equipo acepte, degradando
+  /// en vez de fallar (el equipo objetivo es de gama baja).
+  Future<CameraController?> _createController(CameraDescription cam) async {
+    for (final preset in const [
+      ResolutionPreset.veryHigh,
+      ResolutionPreset.high,
+      ResolutionPreset.medium,
+    ]) {
+      final c = CameraController(cam, preset, enableAudio: false);
+      try {
+        await c.initialize();
+        _activePreset = preset.name;
+        debugPrint('[real_search] Cámara en ${preset.name}');
+        return c;
+      } catch (e) {
+        debugPrint('[real_search] ${preset.name} no soportado: $e');
+        try { await c.dispose(); } catch (_) {}
+      }
+    }
+    return null;
+  }
+
   Future<void> _initCamera() async {
     try {
       final cams = await availableCameras();
@@ -132,12 +157,16 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         if (mounted) setState(() => _cameraError = 'No se encontró cámara.');
         return;
       }
-      final controller = CameraController(
-        cams.first,
-        ResolutionPreset.medium,
-        enableAudio: false,
-      );
-      await controller.initialize();
+      // Misma resolución alta que al guardar, con degradación si el equipo no
+      // la soporta: sin píxeles suficientes sobre el objeto el matching por
+      // puntos clave devuelve ruido (ver detection_crop.dart → imageSharpness).
+      // Convertir el frame no cuesta más porque solo se convierte el cuadrado
+      // guía (ver camera_frame_converter.dart).
+      final controller = await _createController(cams.first);
+      if (controller == null) {
+        if (mounted) setState(() => _cameraError = 'No se pudo iniciar la cámara.');
+        return;
+      }
       // Sin esto, algunos Android disparan el flash automático en poca luz —
       // el plugin no fija FlashMode por defecto. Mismo bloque que en
       // camera_detection_view.dart.
@@ -145,6 +174,13 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         await controller.setFlashMode(FlashMode.off);
       } catch (e) {
         debugPrint('No se pudo forzar flash apagado: $e');
+      }
+      // Sin esto el autofoco continuo "caza" con el objeto cerca y la mayoría
+      // de los frames salen blandos, que es justo lo que mata al matcher.
+      try {
+        await controller.setFocusMode(FocusMode.auto);
+      } catch (e) {
+        debugPrint('No se pudo fijar el modo de enfoque: $e');
       }
       if (!mounted) {
         await controller.dispose();
@@ -212,7 +248,14 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         img.Image? image;
         final frame = _lastFrame;
         if (_streamActive && frame != null) {
-          image = await CameraFrameConverter.toDisplayImage(frame, c);
+          // Se convierte SOLO el cuadrado guía: es lo único que se compara, y
+          // así subir la resolución de la cámara no encarece el escaneo (a
+          // 1080p son ~420 K píxeles en vez de ~2 M).
+          image = await CameraFrameConverter.toDisplayImage(
+            frame,
+            c,
+            centerCropFraction: kGuideFrameFraction,
+          );
         }
         if (image == null && !_streamActive) {
           final xfile = await c.takePicture();
@@ -233,8 +276,21 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         // sin que el objeto hubiera cambiado. Comparar "mismo tipo de
         // recorte contra mismo tipo de recorte" es lo que hace que el número
         // de la Tabla II signifique algo.
-        var toEmbed = cropToGuideSquare(image);
+        // Cuando el frame viene del stream ya ES el cuadrado guía (se recortó
+        // en espacio YUV); solo hace falta recortar en el camino de respaldo
+        // con takePicture(), que entrega el encuadre completo.
+        var toEmbed = _streamActive ? image : cropToGuideSquare(image);
         var cropMethod = 'guide_frame';
+
+        // Saltear frames borrosos en vez de compararlos: con menos de 2 px de
+        // desenfoque el matching por puntos clave cae a cero (ver
+        // imageSharpness), así que compararlos solo gasta CPU y ensucia las
+        // métricas. Además ahorra la inferencia de MobileNetV2 del frame.
+        final sharpness = imageSharpness(toEmbed);
+        if (sharpness < kMinSharpness) {
+          await Future.delayed(_frameInterval);
+          continue;
+        }
         if (AppSettings.instance.useWatershedSegmentation) {
           final segmented = segmentForeground(toEmbed);
           if (segmented != null) {
@@ -309,6 +365,7 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           stopwatch: metricsStopwatch,
           cropMethod: cropMethod,
           orbMatches: orbMatches,
+          sharpness: sharpness,
         );
 
         if (found) {
@@ -343,6 +400,7 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     double? discardedBoxWidth,
     double? discardedBoxHeight,
     int orbMatches = 0,
+    double sharpness = 0,
   }) async {
     try {
       final allSavedObjects = await _savedObjectsRepo.getAll();
@@ -370,6 +428,8 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         storedObjectCount: allSavedObjects.length,
         allObjectSimilarities: allSims,
         orbMatches: orbMatches,
+        sharpness: sharpness,
+        resolutionPreset: _activePreset,
         cropMethod: cropMethod,
         cropDetectionClassId: cropClassId,
         cropDetectionLabel: cropLabel,

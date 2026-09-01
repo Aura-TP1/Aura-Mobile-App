@@ -1,4 +1,5 @@
 import 'dart:isolate';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
@@ -34,11 +35,18 @@ class CameraFrameConverter {
   ///
   /// Nota: el recorte que usa la app es un cuadrado centrado, y la rotación
   /// no mueve un cuadrado centrado — solo endereza el contenido.
+  ///
+  /// [centerCropFraction] convierte SOLO un cuadrado centrado de lado
+  /// `fracción * ladoCorto`, en vez del frame entero. Es lo que permite subir
+  /// la resolución de la cámara sin que el escaneo se arrastre: el único
+  /// píxel que la app usa es el del marco guía, y a 1080p convertir el frame
+  /// completo son ~2 M de píxeles contra ~420 K del cuadrado guía.
   static Future<img.Image?> toDisplayImage(
     CameraImage frame,
-    CameraController controller,
-  ) async {
-    final image = await toImage(frame);
+    CameraController controller, {
+    double? centerCropFraction,
+  }) async {
+    final image = await toImage(frame, centerCropFraction: centerCropFraction);
     if (image == null) return null;
     final angle = controller.description.sensorOrientation;
     if (angle == 0) return image;
@@ -51,12 +59,15 @@ class CameraFrameConverter {
   }
 
   /// Convierte un frame del stream a `img.Image` en orientación de sensor.
-  static Future<img.Image?> toImage(CameraImage frame) async {
+  static Future<img.Image?> toImage(
+    CameraImage frame, {
+    double? centerCropFraction,
+  }) async {
     try {
       if (frame.format.group == ImageFormatGroup.yuv420) {
-        return await _convertYuv420(frame);
+        return await _convertYuv420(frame, centerCropFraction);
       } else if (frame.format.group == ImageFormatGroup.bgra8888) {
-        return _convertBgra8888(frame);
+        return _convertBgra8888(frame, centerCropFraction);
       }
       return null;
     } catch (e) {
@@ -80,14 +91,23 @@ class CameraFrameConverter {
   //  - BGRA8888 (iOS) no pasa por el loop pixel-a-pixel — usa
   //    `img.Image.fromBytes` directo sobre los bytes nativos — así que se
   //    mantiene síncrono, no necesita isolate.
-  static Future<img.Image> _convertYuv420(CameraImage frame) async {
+  static Future<img.Image> _convertYuv420(
+    CameraImage frame,
+    double? centerCropFraction,
+  ) async {
     final yPlane = frame.planes[0];
     final uPlane = frame.planes[1];
     final vPlane = frame.planes[2];
 
+    final rect = _centerSquare(frame.width, frame.height, centerCropFraction);
+
     final args = YuvConversionArgs(
       width: frame.width,
       height: frame.height,
+      cropX: rect[0],
+      cropY: rect[1],
+      cropW: rect[2],
+      cropH: rect[3],
       yStride: yPlane.bytesPerRow,
       uvStride: uPlane.bytesPerRow,
       uvPixelStride: uPlane.bytesPerPixel ?? 1,
@@ -101,21 +121,44 @@ class CameraFrameConverter {
 
     final rgb = await Isolate.run(() => yuv420ToRgb(args));
     return img.Image.fromBytes(
-      width: args.width,
-      height: args.height,
+      width: args.cropW,
+      height: args.cropH,
       bytes: rgb.buffer,
       numChannels: 3,
     );
   }
 
-  static img.Image _convertBgra8888(CameraImage frame) {
-    return img.Image.fromBytes(
+  static img.Image _convertBgra8888(CameraImage frame, double? fraction) {
+    final full = img.Image.fromBytes(
       width: frame.width,
       height: frame.height,
       bytes: frame.planes[0].bytes.buffer,
       numChannels: 4,
       order: img.ChannelOrder.bgra,
     );
+    if (fraction == null) return full;
+    // En BGRA (iOS) no hay planos entrelazados que recortar: se convierte
+    // todo y se recorta después. El ahorro no aplica, pero el resultado es
+    // el mismo que en YUV.
+    final r = _centerSquare(frame.width, frame.height, fraction);
+    return img.copyCrop(full, x: r[0], y: r[1], width: r[2], height: r[3]);
+  }
+
+  /// Cuadrado centrado de lado `fracción * ladoCorto`, o el frame completo si
+  /// [fraction] es null. Los offsets se fuerzan a PARES: los planos U/V están
+  /// submuestreados a la mitad, así que recortar en un offset impar
+  /// desalinearía el color respecto de la luminancia.
+  static List<int> _centerSquare(int w, int h, double? fraction) {
+    if (fraction == null) return [0, 0, w, h];
+    final short = math.min(w, h);
+    var side = (short * fraction).round();
+    if (side.isOdd) side -= 1;
+    side = side.clamp(2, short).toInt();
+    var x = ((w - side) ~/ 2);
+    var y = ((h - side) ~/ 2);
+    if (x.isOdd) x -= 1;
+    if (y.isOdd) y -= 1;
+    return [math.max(0, x), math.max(0, y), side, side];
   }
 }
 
@@ -125,6 +168,14 @@ class CameraFrameConverter {
 class YuvConversionArgs {
   final int width;
   final int height;
+
+  /// Región del frame que hay que convertir (cuadrado centrado del marco
+  /// guía, o el frame entero). Recortar acá y no después es lo que hace que
+  /// subir la resolución de la cámara no cueste tiempo de conversión.
+  final int cropX;
+  final int cropY;
+  final int cropW;
+  final int cropH;
   final int yStride;
   final int uvStride;
   final int uvPixelStride;
@@ -135,6 +186,10 @@ class YuvConversionArgs {
   YuvConversionArgs({
     required this.width,
     required this.height,
+    required this.cropX,
+    required this.cropY,
+    required this.cropW,
+    required this.cropH,
     required this.yStride,
     required this.uvStride,
     required this.uvPixelStride,
@@ -147,10 +202,12 @@ class YuvConversionArgs {
 /// Función top-level ejecutada dentro del isolate de background vía
 /// `Isolate.run`. Conversión YUV420 → RGB (BT.601).
 Uint8List yuv420ToRgb(YuvConversionArgs a) {
-  final rgb = Uint8List(a.width * a.height * 3);
+  final rgb = Uint8List(a.cropW * a.cropH * 3);
   int idx = 0;
-  for (int y = 0; y < a.height; y++) {
-    for (int x = 0; x < a.width; x++) {
+  for (int yy0 = 0; yy0 < a.cropH; yy0++) {
+    final y = a.cropY + yy0;
+    for (int xx0 = 0; xx0 < a.cropW; xx0++) {
+      final x = a.cropX + xx0;
       final yy = a.yBytes[y * a.yStride + x] - 16;
       final uvIdx = (y >> 1) * a.uvStride + (x >> 1) * a.uvPixelStride;
       final uu = a.uBytes[uvIdx] - 128;

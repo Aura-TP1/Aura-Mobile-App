@@ -101,6 +101,12 @@ class MetricsLogger {
     // independiente del embedding — se registra para poder recalibrar
     // OrbMatcher.kMinGoodMatches con datos del teléfono en vez de a ojo.
     int orbMatches = 0,
+    // Nitidez del recorte (varianza del Laplaciano) y resolución efectiva de
+    // la cámara. Sin píxeles suficientes y con desenfoque, el matching por
+    // puntos clave devuelve ruido — se registran para poder calibrar el
+    // umbral con datos del dispositivo (ver detection_crop.dart).
+    double sharpness = 0,
+    String? resolutionPreset,
     // Diagnóstico del recorte usado para este intento de búsqueda (ver
     // detection_crop.dart): permite analizar, por objeto, si YOLO logró
     // localizar el objeto (aunque sea con baja confianza) o si se usó el
@@ -151,6 +157,8 @@ class MetricsLogger {
         'targetObjectName': targetObjectName,
         'targetSimilarity': targetSimilarity,
         'orbMatches': orbMatches,
+        'sharpness': sharpness,
+        'resolutionPreset': resolutionPreset,
         'decision': decision,
         'latencyMs': latencyMs,
         'storedObjectCount': storedObjectCount,
@@ -199,6 +207,8 @@ class MetricsLogger {
     int? previewWidth,
     int? previewHeight,
     int? cropSide,
+    double? sharpness,
+    String? resolutionPreset,
   }) async {
     try {
       final entry = <String, dynamic>{
@@ -218,6 +228,8 @@ class MetricsLogger {
         'previewWidth': previewWidth,
         'previewHeight': previewHeight,
         'cropSide': cropSide,
+        'sharpness': sharpness,
+        'resolutionPreset': resolutionPreset,
       };
       await _appendLine(_cropFileName, entry);
     } catch (e) {

@@ -147,6 +147,78 @@ img.Image drawGuideSquareOverlay(img.Image photo, {double fraction = kGuideFrame
   return canvas;
 }
 
+/// Nitidez mínima que debe tener un recorte para que valga la pena
+/// compararlo. Ver [imageSharpness] para el porqué del número.
+const double kMinSharpness = 45.0;
+
+/// Mide la nitidez de [image] como la VARIANZA DEL LAPLACIANO: cuánta
+/// energía de alta frecuencia hay. Una imagen enfocada tiene bordes marcados
+/// (varianza alta); una borrosa los tiene lavados (varianza baja).
+///
+/// Por qué se agregó, con números medidos sobre la foto real del blister: el
+/// matching por puntos clave se DERRUMBA con el desenfoque normal de una
+/// cámara en mano. Con el objeto al tamaño que tenía en la app:
+///
+/// | desenfoque | coincidencias ORB |
+/// |------------|-------------------|
+/// | nítido     | 180               |
+/// | 0.8 px     | 10                |
+/// | 1.5 px     | 0                 |
+///
+/// Y la tolerancia depende de cuántos píxeles tenga el objeto. Con un
+/// desenfoque realista de 1.0 px:
+///
+/// | ancho del objeto | coincidencias | nitidez |
+/// |------------------|---------------|---------|
+/// | 110 px           | 3             | 33      |
+/// | 260 px           | 37            | 49      |
+/// | 360 px           | 43            | 73      |
+///
+/// El caso de 110 px reproduce exactamente los `orbMatches` de 0-7 medidos en
+/// el teléfono. De ahí sale [kMinSharpness] = 45: entre el 33 que falla y el
+/// 49 que funciona. El valor real se registra en las métricas de cada captura
+/// y cada búsqueda, para poder recalibrarlo con datos del dispositivo en vez
+/// de a ojo.
+double imageSharpness(img.Image image) {
+  try {
+    final w = image.width;
+    final h = image.height;
+    if (w < 3 || h < 3) return 0;
+
+    final gray = Float32List(w * h);
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        final p = image.getPixel(x, y);
+        gray[y * w + x] = 0.299 * p.r + 0.587 * p.g + 0.114 * p.b;
+      }
+    }
+
+    var sum = 0.0;
+    var sumSq = 0.0;
+    var n = 0;
+    for (var y = 1; y < h - 1; y++) {
+      for (var x = 1; x < w - 1; x++) {
+        final i = y * w + x;
+        final lap = gray[i - 1] +
+            gray[i + 1] +
+            gray[i - w] +
+            gray[i + w] -
+            4 * gray[i];
+        sum += lap;
+        sumSq += lap * lap;
+        n++;
+      }
+    }
+    if (n == 0) return 0;
+    final mean = sum / n;
+    final variance = (sumSq / n) - (mean * mean);
+    return variance < 0 ? 0 : variance;
+  } catch (_) {
+    // Nunca bloquear el guardado/búsqueda por no poder medir la nitidez.
+    return double.infinity;
+  }
+}
+
 /// Normaliza brillo/contraste antes de extraer el embedding: estira el
 /// rango de intensidad de la imagen a [0, 255]. Objetivo: que la diferencia
 /// de iluminación entre el momento de GUARDAR un objeto y el momento de
