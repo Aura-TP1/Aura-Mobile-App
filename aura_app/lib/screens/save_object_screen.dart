@@ -479,18 +479,48 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       // buscar).
       final variants = <String, img.Image>{
         'original': toEmbed,
-        'rot45': img.copyRotate(toEmbed, angle: 45),
-        'rot90': img.copyRotate(toEmbed, angle: 90),
-        'rot135': img.copyRotate(toEmbed, angle: 135),
-        'rot180': img.copyRotate(toEmbed, angle: 180),
-        'rot225': img.copyRotate(toEmbed, angle: 225),
-        'rot270': img.copyRotate(toEmbed, angle: 270),
-        'rot315': img.copyRotate(toEmbed, angle: 315),
         'flip': img.flipHorizontal(toEmbed),
         'zoom_in': centerCrop(toEmbed, fraction: 0.85),
         'bright_up': img.adjustColor(toEmbed, brightness: 1.25),
         'bright_down': img.adjustColor(toEmbed, brightness: 0.75),
       };
+
+      // Las variantes ROTADAS se generan girando el ENCUADRE COMPLETO y
+      // recortando el cuadrado guía después, no girando el recorte ya hecho.
+      //
+      // Antes era `img.copyRotate(toEmbed, angle: 45)` sobre el cuadrado ya
+      // recortado: `copyRotate` expande el lienzo y rellena las esquinas de
+      // negro, y medido da **50% de la imagen en negro** para 45/135/225/315
+      // (0% para 90/180/270, que no necesitan expandir). Ese aspa negra no
+      // existe en ninguna foto real, así que esas cuatro variantes no podían
+      // coincidir con nada — confirmado en campo: el objeto se reconocía
+      // girado a 90° pero NUNCA en diagonal. Girando el frame completo, las
+      // esquinas del cuadrado caen sobre contenido real (ver
+      // cropCenteredSquare en detection_crop.dart).
+      //
+      // El frame se reduce una vez para que el cuadrado guía salga cerca de
+      // 224px, así las 7 rotaciones no trabajan sobre el encuadre a
+      // resolución completa.
+      final guideSideFull = kGuideFrameFraction * math.min(oriented.width, oriented.height);
+      final rotScale = 224 / guideSideFull;
+      final rotSource = rotScale < 1.0
+          ? img.copyResize(
+              oriented,
+              width: (oriented.width * rotScale).round(),
+              height: (oriented.height * rotScale).round(),
+            )
+          : oriented;
+      final rotSide =
+          (kGuideFrameFraction * math.min(rotSource.width, rotSource.height)).round();
+      for (final angle in const [45, 90, 135, 180, 225, 270, 315]) {
+        try {
+          final rotated = img.copyRotate(rotSource, angle: angle);
+          variants['rot$angle'] =
+              normalizeForEmbedding(cropCenteredSquare(rotated, rotSide));
+        } catch (e) {
+          debugPrint('[save_object] No se pudo generar rot$angle: $e');
+        }
+      }
 
       final results = <ObjectEmbedding>[];
       for (final entry in variants.entries) {

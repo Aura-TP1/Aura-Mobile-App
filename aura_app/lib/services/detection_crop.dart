@@ -79,6 +79,26 @@ img.Image cropToGuideSquare(img.Image photo, {double fraction = kGuideFrameFract
   return img.copyCrop(oriented, x: x, y: y, width: side, height: side);
 }
 
+/// Recorta un cuadrado centrado de lado [side] píxeles.
+///
+/// Se usa para generar las variantes rotadas: se rota el ENCUADRE COMPLETO y
+/// después se recorta de acá el cuadrado del tamaño del marco guía, en vez de
+/// rotar el recorte ya hecho. Rotar un cuadrado 45° con `img.copyRotate`
+/// expande el lienzo y rellena las esquinas de negro — medido: el 50% de la
+/// imagen resultante queda negro. Ese aspa negra no existe en ninguna foto
+/// real, así que las variantes diagonales nunca podían coincidir con el
+/// objeto girado en diagonal (confirmado en campo: reconocía a 90° pero
+/// nunca en diagonal). Rotando el frame completo, las esquinas del cuadrado
+/// caen sobre contenido real: el cuadrado tiene media diagonal
+/// `0.6 * min / 2 * raíz(2) = 0.424 * min`, dentro del círculo de radio
+/// `0.5 * min` que queda garantizado con contenido real tras cualquier giro.
+img.Image cropCenteredSquare(img.Image image, int side) {
+  final s = side.clamp(1, math.min(image.width, image.height)).toInt();
+  final x = ((image.width - s) / 2).round();
+  final y = ((image.height - s) / 2).round();
+  return img.copyCrop(image, x: x, y: y, width: s, height: s);
+}
+
 /// Aplica la rotación EXIF a una foto recién decodificada. `img.decodeImage`
 /// deja el tag de orientación sin aplicar, así que sin esto una foto tomada
 /// en vertical se procesa como si fuera apaisada.
