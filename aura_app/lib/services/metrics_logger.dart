@@ -230,6 +230,11 @@ class MetricsLogger {
     int? cropSide,
     double? sharpness,
     String? resolutionPreset,
+    // Cuántas variantes sintéticas se guardaron realmente. Cada una tiene su
+    // try/catch individual, así que una que falle no se nota salvo que se
+    // cuente: sirve para confirmar en el teléfono que las variantes de escala
+    // se están generando y no fallando en silencio.
+    int? variantCount,
   }) async {
     try {
       final entry = <String, dynamic>{
@@ -252,6 +257,7 @@ class MetricsLogger {
         'cropSide': cropSide,
         'sharpness': sharpness,
         'resolutionPreset': resolutionPreset,
+        'variantCount': variantCount,
       };
       await _appendLine(_cropFileName, entry);
     } catch (e) {

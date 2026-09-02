@@ -110,6 +110,81 @@ img.Image cropCenteredSquare(img.Image image, int side) {
   return img.copyCrop(image, x: x, y: y, width: s, height: s);
 }
 
+/// Devuelve [crop] REDUCIDO dentro de un lienzo del mismo tamaño, rellenando
+/// el resto con un fondo neutro: simula cómo se ve el objeto cuando está MÁS
+/// LEJOS de la cámara que cuando se guardó.
+///
+/// Por qué hace falta, medido con el MobileNetV2 real contra la foto real del
+/// blister (similitud coseno contra el objeto guardado llenando el cuadro):
+///
+/// | el objeto ocupa | coseno | umbral 0.75 |
+/// |-----------------|--------|-------------|
+/// | 80%             | 0.868  | pasa        |
+/// | 65%             | 0.747  | justo       |
+/// | 50%             | 0.618  | NO          |
+/// | 35%             | 0.485  | NO          |
+/// | 25%             | 0.407  | NO          |
+///
+/// Las variantes que se guardaban cubrían rotación, espejo, brillo y
+/// `zoom_in` (recorte más ajustado, o sea el objeto más GRANDE), pero ninguna
+/// en la que el objeto se viera más CHICO. Al objeto nunca se le enseñaba cómo
+/// se ve de lejos y después se le pedía reconocerlo de lejos. Agregando estas
+/// variantes al banco, los mismos casos suben a 0.92-0.95.
+///
+/// No es un problema del modelo: medido con el mismo protocolo, ResNet50 da
+/// 0.614 al 50% contra 0.618 de MobileNetV2 — idéntico. Los tres modelos
+/// probados usan *global average pooling*, así que el descriptor resume TODO
+/// el cuadro: si el objeto ocupa el 25%, el 75% del vector es fondo.
+///
+/// El relleno es el color PROMEDIO DEL BORDE del propio recorte, no negro: ya
+/// se aprendió con las variantes rotadas que el negro es un patrón que no
+/// existe en ninguna foto real y arruina la variante.
+img.Image shrinkIntoFrame(img.Image crop, double scale) {
+  final side = math.min(crop.width, crop.height);
+  final inner = (side * scale).round().clamp(8, side).toInt();
+  final small = img.copyResize(crop, width: inner, height: inner);
+  final canvas = img.Image(width: side, height: side);
+  img.fill(canvas, color: _borderAverageColor(crop));
+  img.compositeImage(
+    canvas,
+    small,
+    dstX: ((side - inner) / 2).round(),
+    dstY: ((side - inner) / 2).round(),
+  );
+  return canvas;
+}
+
+/// Color promedio del borde de [image], para rellenar con algo parecido a la
+/// superficie sobre la que está el objeto en vez de un color inventado.
+img.Color _borderAverageColor(img.Image image) {
+  try {
+    final w = image.width;
+    final h = image.height;
+    final bytes = image.getBytes(order: img.ChannelOrder.rgb);
+    var r = 0, g = 0, b = 0, n = 0;
+    void take(int x, int y) {
+      final i = (y * w + x) * 3;
+      if (i + 2 >= bytes.length) return;
+      r += bytes[i];
+      g += bytes[i + 1];
+      b += bytes[i + 2];
+      n++;
+    }
+    for (var x = 0; x < w; x++) {
+      take(x, 0);
+      take(x, h - 1);
+    }
+    for (var y = 0; y < h; y++) {
+      take(0, y);
+      take(w - 1, y);
+    }
+    if (n == 0) return img.ColorRgb8(128, 128, 128);
+    return img.ColorRgb8(r ~/ n, g ~/ n, b ~/ n);
+  } catch (_) {
+    return img.ColorRgb8(128, 128, 128);
+  }
+}
+
 /// Aplica la rotación EXIF a una foto recién decodificada. `img.decodeImage`
 /// deja el tag de orientación sin aplicar, así que sin esto una foto tomada
 /// en vertical se procesa como si fuera apaisada.

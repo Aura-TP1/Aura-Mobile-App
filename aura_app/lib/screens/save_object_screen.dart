@@ -508,24 +508,6 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       // del lag que el usuario reportaba entre tocar el botón y tener el
       // objeto guardado.
       // ignore: discarded_futures
-      // Se registran las dimensiones reales para no tener que volver a
-      // deducir la geometría a partir de una foto: si el recorte vuelve a no
-      // corresponder al marco, estos números dicen dónde está el desfase.
-      final previewSize = _camera!.value.previewSize;
-      MetricsLogger.instance.logCropSelection(
-        screen: 'save_object',
-        objectLabel: _nameController.text.trim(),
-        cropMethod: cropMethod,
-        frameSource: _streamActive && _lastFrame != null ? 'preview_stream' : 'take_picture',
-        frameWidth: oriented.width,
-        frameHeight: oriented.height,
-        previewWidth: previewSize?.width.round(),
-        previewHeight: previewSize?.height.round(),
-        cropSide: toEmbed.width,
-        sharpness: sharpness,
-        resolutionPreset: _activePreset,
-      );
-
       // Guardar el recorte real (antes de normalizar) para el visor
       // "Recortes recientes" de Ajustes — antes solo había metadata en
       // crop_metrics.jsonl, no la imagen, así que no había forma de
@@ -584,6 +566,7 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
       // veces el trabajo de píxeles sobre imágenes grandes, en el hilo de UI,
       // para terminar en el mismo 224x224. El recorte ya es cuadrado, así que
       // reducirlo acá no deforma nada.
+      final cropSideForMetrics = toEmbed.width;
       toEmbed = img.copyResize(toEmbed, width: 224, height: 224);
 
       // Variantes sintéticas de la MISMA foto ya recortada — sin tomar
@@ -600,6 +583,22 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
         'bright_up': img.adjustColor(toEmbed, brightness: 1.25),
         'bright_down': img.adjustColor(toEmbed, brightness: 0.75),
       };
+
+      // Variantes "DE LEJOS": el objeto reducido dentro del cuadro. Es la
+      // dirección que faltaba — `zoom_in` recorta más ajustado (objeto más
+      // GRANDE) y no había ninguna con el objeto más CHICO, así que al objeto
+      // nunca se le enseñaba cómo se ve de lejos y después se le pedía
+      // reconocerlo de lejos. Medido con el MobileNetV2 real: con el objeto al
+      // 50% del cuadro la similitud era 0.618 (por debajo del umbral 0.75) y
+      // con estas variantes sube a 0.948. Ver shrinkIntoFrame.
+      for (final scale in const [0.7, 0.5, 0.35, 0.25]) {
+        try {
+          variants['far_${(scale * 100).round()}'] =
+              shrinkIntoFrame(toEmbed, scale);
+        } catch (e) {
+          debugPrint('[save_object] No se pudo generar far_$scale: $e');
+        }
+      }
 
       // Las variantes ROTADAS se generan girando el ENCUADRE COMPLETO y
       // recortando el cuadrado guía después, no girando el recorte ya hecho.
@@ -653,6 +652,28 @@ class _SaveObjectScreenState extends State<SaveObjectScreen> {
           results.add(ObjectEmbedding.create(embedding: emb, angleDescription: entry.key));
         }
       }
+      // Se registra al final para poder incluir CUÁNTAS variantes salieron de
+      // verdad: cada una tiene su try/catch individual, así que una que falle
+      // no se nota salvo que se cuente. Las dimensiones reales van también
+      // para no tener que volver a deducir la geometría desde una foto.
+      final previewSize = _camera!.value.previewSize;
+      // ignore: discarded_futures
+      MetricsLogger.instance.logCropSelection(
+        screen: 'save_object',
+        objectLabel: _nameController.text.trim(),
+        cropMethod: cropMethod,
+        frameSource:
+            _streamActive && _lastFrame != null ? 'preview_stream' : 'take_picture',
+        frameWidth: oriented.width,
+        frameHeight: oriented.height,
+        previewWidth: previewSize?.width.round(),
+        previewHeight: previewSize?.height.round(),
+        cropSide: cropSideForMetrics,
+        sharpness: sharpness,
+        resolutionPreset: _activePreset,
+        variantCount: results.length,
+      );
+
       return results;
     } catch (e) {
       debugPrint('Error capturando foto: $e');
