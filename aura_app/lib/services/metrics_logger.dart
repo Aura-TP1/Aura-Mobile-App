@@ -29,6 +29,13 @@ class MetricsLogger {
   static const String _searchFileName = 'search_metrics.jsonl';
   static const String _cropFileName = 'crop_metrics.jsonl';
 
+  /// Eventos de sesión de validación con usuarios (inicio/fin de tarea y
+  /// resultado que marca el moderador).
+  ///
+  /// Va en un archivo aparte a propósito: registra ventanas de tiempo y el
+  /// veredicto humano sin meter mano en los tres archivos del pipeline.
+  static const String _sessionFileName = 'session_events.jsonl';
+
   Directory? _metricsDir;
 
   Future<Directory> _getMetricsDir() async {
@@ -56,6 +63,15 @@ class MetricsLogger {
     }
   }
 
+  /// Etiquetas de la sesión de validación que se adjuntan a TODOS los
+  /// eventos, para poder separar después los datos por persona y por tarea.
+  Map<String, dynamic> get _sessionTags => {
+        'participantId': _participantId,
+        'activeTask': _activeTask,
+        'testCondition': _testCondition,
+        'testRunLabel': _testRunLabel,
+      };
+
   int _classIdOf(String label) {
     final idx = cocoLabels.indexOf(label);
     return idx; // -1 si no se encuentra en la lista COCO.
@@ -68,6 +84,7 @@ class MetricsLogger {
     try {
       final entry = <String, dynamic>{
         'timestamp': DateTime.now().toIso8601String(),
+        ..._sessionTags,
         'frameLatencyMs': frameLatencyMs,
         'detections': detections
             .map((d) => {
@@ -157,6 +174,7 @@ class MetricsLogger {
 
       final entry = <String, dynamic>{
         'timestamp': DateTime.now().toIso8601String(),
+        ..._sessionTags,
         'targetObjectId': targetObjectId,
         'targetObjectName': targetObjectName,
         'targetSimilarity': targetSimilarity,
@@ -167,8 +185,6 @@ class MetricsLogger {
         'decision': decision,
         'latencyMs': latencyMs,
         'storedObjectCount': storedObjectCount,
-        'testCondition': _testCondition,
-        'testRunLabel': _testRunLabel,
         'topOtherObjectId': topOtherObjectId,
         'topOtherObjectSimilarity': topOtherObjectSimilarity,
         'wouldConfuseWithOther': wouldConfuseWithOther,
@@ -218,6 +234,7 @@ class MetricsLogger {
     try {
       final entry = <String, dynamic>{
         'timestamp': DateTime.now().toIso8601String(),
+        ..._sessionTags,
         'screen': screen,
         'objectLabel': objectLabel,
         'cropMethod': cropMethod,
@@ -261,6 +278,43 @@ class MetricsLogger {
     }
   }
 
+  String get _participantId {
+    try {
+      return AppSettings.instance.participantId;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  String get _activeTask {
+    try {
+      return AppSettings.instance.activeTask;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// Marca el inicio o el fin de una tarea de la sesión de validación.
+  ///
+  /// [type] es 'task_start' o 'task_end'. [result] solo aplica al fin y es el
+  /// veredicto del MODERADOR ('exito', 'asistido', 'fracaso', 'abandonado'),
+  /// independiente de lo que digan las métricas automáticas.
+  Future<void> logSessionEvent({
+    required String type,
+    String? result,
+  }) async {
+    try {
+      await _appendLine(_sessionFileName, <String, dynamic>{
+        'timestamp': DateTime.now().toIso8601String(),
+        ..._sessionTags,
+        'type': type,
+        'result': result,
+      });
+    } catch (e) {
+      debugPrint('MetricsLogger.logSessionEvent error: $e');
+    }
+  }
+
   // ── Lectura/borrado (para el visor de métricas en Ajustes) ─────────────
   // Todo lo de arriba solo escribe — hasta ahora la única forma de ver
   // estos archivos era conectar el celular por cable y leerlos a mano.
@@ -269,6 +323,7 @@ class MetricsLogger {
     _detectionFileName,
     _searchFileName,
     _cropFileName,
+    _sessionFileName,
   ];
 
   /// Nombre, tamaño en bytes y cantidad de líneas (registros) de cada
@@ -325,7 +380,7 @@ class MetricsLogger {
     return lines.sublist(start).reversed.toList();
   }
 
-  /// Borra los 3 archivos de métricas y los recortes de depuración
+  /// Borra los archivos de métricas y los recortes de depuración
   /// guardados. Pensado para arrancar una tanda de pruebas de campo desde
   /// cero.
   Future<void> deleteAllMetrics() async {

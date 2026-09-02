@@ -27,6 +27,8 @@ class AppSettings extends ChangeNotifier {
   static const _kUseOrbKey = 'use_orb_matching';
   static const _kTestConditionKey = 'test_condition';
   static const _kTestRunLabelKey = 'test_run_label';
+  static const _kParticipantIdKey = 'participant_id';
+  static const _kActiveTaskKey = 'active_task';
 
   /// Velocidad de habla base usada antes de aplicar [voiceSpeed].
   static const double _baseRate = 0.45;
@@ -125,6 +127,21 @@ class AppSettings extends ChangeNotifier {
   /// de empezar un conjunto de búsquedas (para métricas).
   String testRunLabel = '';
 
+  /// ID del participante en una sesión de validación con usuarios reales
+  /// ("P01", "P02"). Lo escribe el moderador desde Ajustes → Modo
+  /// investigador ANTES de empezar con cada persona.
+  ///
+  /// A diferencia de [testCondition]/[testRunLabel], que etiquetan pruebas
+  /// técnicas, esto queda registrado en LOS TRES archivos de métricas
+  /// (detección, búsqueda y recorte) para poder separar después los datos por
+  /// persona.
+  String participantId = '';
+
+  /// Nombre de la tarea que el participante está haciendo ahora
+  /// ("tarea1_guardar", "tarea3_buscar"). Se registra junto a
+  /// [participantId] en cada evento.
+  String activeTask = '';
+
   bool _loaded = false;
 
   /// Carga los valores guardados. Debe llamarse una vez al inicio (en
@@ -152,6 +169,8 @@ class AppSettings extends ChangeNotifier {
     sttPauseForMs = prefs.getDouble(_kSttPauseForMsKey) ?? sttPauseForMs;
     testCondition = prefs.getString(_kTestConditionKey) ?? testCondition;
     testRunLabel = prefs.getString(_kTestRunLabelKey) ?? testRunLabel;
+    participantId = prefs.getString(_kParticipantIdKey) ?? participantId;
+    activeTask = prefs.getString(_kActiveTaskKey) ?? activeTask;
   }
 
   /// Duración efectiva de escucha STT, con piso de seguridad.
@@ -284,6 +303,20 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kTestConditionKey, value);
+  }
+
+  Future<void> setParticipantId(String value) async {
+    participantId = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kParticipantIdKey, value);
+  }
+
+  Future<void> setActiveTask(String value) async {
+    activeTask = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kActiveTaskKey, value);
   }
 
   Future<void> setTestRunLabel(String value) async {

@@ -567,7 +567,11 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     // varios segundos en resolver — el botón "volver" se sentía trabado.
     // Fire-and-forget: el audio se corta igual, pero no bloquea el pop.
     unawaited(_audio.stop());
-    Navigator.of(context).pop();
+    // Vuelve directo al INICIO, no a la lista de objetos: son dos pantallas
+    // apiladas y en prueba con adultos mayores tener que apretar "atrás" dos
+    // veces (con flechas chicas arriba a la izquierda que no llegaban a ver)
+    // los desorientaba. Desde acá, volver significa volver al menú.
+    Navigator.of(context).popUntil((r) => r.isFirst);
   }
 
   @override
@@ -760,7 +764,40 @@ class _RealSearchScreenState extends State<RealSearchScreen>
             const SizedBox(height: 14),
             _buildSearchAgainButton(),
           ],
+          const SizedBox(height: 12),
+          _buildBigBackButton(),
         ],
+      ),
+    );
+  }
+
+  /// Botón VOLVER grande abajo, además de la flecha del AppBar.
+  ///
+  /// En prueba con adultos mayores la flecha chica de arriba a la izquierda
+  /// directamente no se veía. Abajo es donde llega el pulgar y donde se mira.
+  /// La flecha del AppBar se mantiene porque es lo que TalkBack y el gesto de
+  /// "atrás" del sistema esperan encontrar.
+  Widget _buildBigBackButton() {
+    return SizedBox(
+      width: double.infinity,
+      height: 64,
+      child: OutlinedButton.icon(
+        onPressed: _handleBack,
+        icon: const Icon(Icons.home, size: 28, color: Colors.white),
+        label: const Text(
+          'VOLVER AL INICIO',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+            letterSpacing: 1,
+          ),
+        ),
+        style: OutlinedButton.styleFrom(
+          backgroundColor: Colors.black45,
+          side: const BorderSide(color: Colors.white70, width: 2),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        ),
       ),
     );
   }
@@ -775,10 +812,20 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     // No dependemos solo del color: agregamos texto/ícono de estado
     // (WCAG 1.4.1) además de la etiqueta accesible (WCAG 4.1.2).
     final stateLabel = isClose ? 'Cerca' : 'Buscando';
+    // SIN `liveRegion` y SIN el porcentaje en la semántica.
+    //
+    // Antes esto era `Semantics(label: 'Similitud: X%...', value: 'X%',
+    // liveRegion: true)`. `liveRegion` le ordena a TalkBack anunciar el nodo
+    // CADA VEZ que su contenido cambia, y `_currentSimilarity` cambia en cada
+    // frame del escaneo (~300 ms): el resultado era el lector repitiendo
+    // "37%... 41%... 52%..." sin parar, encima de todo lo demás. Reportado en
+    // prueba con usuarios como que "se buguea repitiendo cada porcentajito".
+    //
+    // El número sigue VISIBLE en pantalla para el moderador; lo que se quita
+    // es que se anuncie en voz. Los avisos que sí importan para quien no ve
+    // (_announceMaybe, _announceGetCloser) ya tienen cooldown propio.
     return Semantics(
-      label: 'Similitud: $pctInt%, $stateLabel',
-      value: '$pctInt%',
-      liveRegion: true,
+      label: 'Estado de la búsqueda: $stateLabel',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

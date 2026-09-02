@@ -35,6 +35,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late double _sttPauseForMs;
   late TextEditingController _testConditionController;
   late TextEditingController _testRunLabelController;
+  late TextEditingController _participantController;
+  late TextEditingController _taskController;
+  /// `true` entre "Iniciar tarea" y el botón de resultado que la cierra.
+  bool _taskRunning = false;
   late bool _useYoloInt8;
   late bool _useEmbeddingInt8;
   late bool _useWatershed;
@@ -64,6 +68,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         TextEditingController(text: AppSettings.instance.testCondition);
     _testRunLabelController =
         TextEditingController(text: AppSettings.instance.testRunLabel);
+    _participantController =
+        TextEditingController(text: AppSettings.instance.participantId);
+    _taskController = TextEditingController(text: AppSettings.instance.activeTask);
     _useYoloInt8 = AppSettings.instance.useYoloInt8;
     _useEmbeddingInt8 = AppSettings.instance.useEmbeddingInt8;
     _useWatershed = AppSettings.instance.useWatershedSegmentation;
@@ -165,15 +172,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Future<void> _startTask() async {
+    await AppSettings.instance.setParticipantId(_participantController.text.trim());
+    await AppSettings.instance.setActiveTask(_taskController.text.trim());
+    await MetricsLogger.instance.logSessionEvent(type: 'task_start');
+    if (!mounted) return;
+    setState(() => _taskRunning = true);
+    await _loadMetricsInfo();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(
+        'Tarea iniciada: ${_taskController.text.trim()} '
+        '(${_participantController.text.trim()})')),
+    );
+  }
+
+  /// Cierra la tarea con el veredicto del MODERADOR. Es independiente de lo
+  /// que digan las métricas automáticas: acá se registra lo que la persona
+  /// realmente logró hacer.
+  Future<void> _endTask(String result) async {
+    await MetricsLogger.instance.logSessionEvent(type: 'task_end', result: result);
+    if (!mounted) return;
+    setState(() => _taskRunning = false);
+    await _loadMetricsInfo();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Tarea cerrada como: $result')),
+    );
+  }
+
   void _confirmClearMetrics() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1e1e1e),
-        title: const Text('Borrar métricas', style: TextStyle(color: Colors.white)),
+        title: const Text('¿Borrar TODO el historial?',
+            style: TextStyle(color: Colors.white)),
         content: const Text(
-          'Esto borra los 3 archivos de métricas guardados en este celular. '
-          'No se puede deshacer — si querés conservarlos, compartilos primero.',
+          'Se borran los 4 archivos de métricas (detección, búsqueda, recorte '
+          'y eventos de sesión) y todos los recortes de depuración guardados '
+          'en este celular.\n\n'
+          'ESTO NO SE PUEDE DESHACER. Si son datos de una sesión con un '
+          'participante, exportalos ANTES de borrar.',
           style: TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -315,6 +355,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _audio.dispose();
     _testConditionController.dispose();
     _testRunLabelController.dispose();
+    _participantController.dispose();
+    _taskController.dispose();
     super.dispose();
   }
 
@@ -346,6 +388,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _buildAdvancedSection(),
               const SizedBox(height: 24),
               _buildMetricsSection(),
+              const SizedBox(height: 24),
+              _buildResearcherSection(),
               const SizedBox(height: 40),
             ],
           ),
@@ -767,6 +811,242 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// Sección "Métricas": antes la única forma de ver los .jsonl era
   /// conectar el celular por cable y leerlos a mano (ADB) — ahora se
   /// pueden compartir (share sheet nativo) o borrar directamente desde acá.
+
+  /// Sección para sesiones de validación con participantes reales.
+  ///
+  /// Separada a propósito del resto de Ajustes, con borde y color propios:
+  /// un usuario que entra a Ajustes a subir el volumen no tiene por qué
+  /// toparse con esto. El moderador la usa en vivo, con la persona al lado,
+  /// así que todo está a un toque de distancia.
+  Widget _buildResearcherSection() {
+    const amber = Color(0xFFFFB74D);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: amber.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: amber.withOpacity(0.5), width: 1.5),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.science_outlined, color: amber, size: 22),
+                SizedBox(width: 10),
+                Text(
+                  'MODO INVESTIGADOR',
+                  style: TextStyle(
+                    color: amber,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Solo para sesiones de validación. El participante y la tarea '
+              'quedan guardados en TODOS los registros mientras la sesión '
+              'esté activa.',
+              style: TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+            const SizedBox(height: 16),
+
+            const Text('ID de participante',
+                style: TextStyle(color: Colors.white70, fontSize: 13)),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _participantController,
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+              decoration: _researcherFieldDecoration('P01'),
+              onChanged: (v) => AppSettings.instance.setParticipantId(v.trim()),
+            ),
+            const SizedBox(height: 14),
+
+            const Text('Tarea actual',
+                style: TextStyle(color: Colors.white70, fontSize: 13)),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _taskController,
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+              decoration: _researcherFieldDecoration('tarea3_buscar'),
+              onChanged: (v) => AppSettings.instance.setActiveTask(v.trim()),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final t in const [
+                  'tarea1_guardar',
+                  'tarea2_mis_objetos',
+                  'tarea3_buscar',
+                ])
+                  ActionChip(
+                    label: Text(t, style: const TextStyle(fontSize: 11)),
+                    backgroundColor: Colors.white10,
+                    labelStyle: const TextStyle(color: Colors.white70),
+                    onPressed: () {
+                      setState(() => _taskController.text = t);
+                      AppSettings.instance.setActiveTask(t);
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            if (!_taskRunning)
+              ElevatedButton.icon(
+                onPressed: _startTask,
+                icon: const Icon(Icons.play_arrow, size: 20),
+                label: const Text('INICIAR TAREA',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: amber,
+                  foregroundColor: Colors.black,
+                  minimumSize: const Size(double.infinity, 48),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                ),
+              )
+            else ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  'TAREA EN CURSO · ${_taskController.text.trim()}',
+                  style: const TextStyle(
+                      color: Colors.greenAccent, fontWeight: FontWeight.bold),
+                ),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'Cerrar la tarea con el resultado que observaste:',
+                style: TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              // Un solo toque cierra la tarea Y anota el resultado: en vivo,
+              // con la persona al lado, dos pasos separados se prestan a
+              // olvidos.
+              Row(
+                children: [
+                  Expanded(child: _resultButton('Éxito', 'exito', Colors.green)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                      child: _resultButton('Asistido', 'asistido', amber)),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                      child: _resultButton('Fracaso', 'fracaso', Colors.redAccent)),
+                  const SizedBox(width: 8),
+                  Expanded(child: _resultButton(
+                      'Abandonado', 'abandonado', Colors.white38)),
+                ],
+              ),
+            ],
+            const SizedBox(height: 18),
+            const Divider(color: Colors.white12),
+            const SizedBox(height: 10),
+
+            OutlinedButton.icon(
+              onPressed: _shareMetrics,
+              icon: const Icon(Icons.share, size: 18, color: amber),
+              label: const Text('EXPORTAR SESIÓN',
+                  style: TextStyle(color: amber, fontWeight: FontWeight.bold)),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: amber),
+                minimumSize: const Size(double.infinity, 48),
+                shape:
+                    RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Abre el menú de compartir del teléfono (WhatsApp, Drive, etc.) '
+              'con los archivos de la sesión.',
+              style: TextStyle(color: Colors.white38, fontSize: 11),
+            ),
+            const SizedBox(height: 14),
+
+            OutlinedButton.icon(
+              onPressed: _isClearingMetrics ? null : _confirmClearMetrics,
+              icon: _isClearingMetrics
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.redAccent))
+                  : const Icon(Icons.delete_forever,
+                      size: 18, color: Colors.redAccent),
+              label: Text(
+                _isClearingMetrics
+                    ? 'Borrando...'
+                    : 'BORRAR HISTORIAL DE MÉTRICAS',
+                style: const TextStyle(
+                    color: Colors.redAccent, fontWeight: FontWeight.bold),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Colors.redAccent),
+                minimumSize: const Size(double.infinity, 48),
+                shape:
+                    RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Irreversible. Exportá antes de borrar.',
+              style: TextStyle(color: Colors.redAccent, fontSize: 11),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  InputDecoration _researcherFieldDecoration(String hint) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: const TextStyle(color: Colors.white24),
+      filled: true,
+      fillColor: Colors.white.withOpacity(0.05),
+      isDense: true,
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide(color: Colors.white.withOpacity(0.15)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide(color: Colors.white.withOpacity(0.15)),
+      ),
+    );
+  }
+
+  Widget _resultButton(String label, String value, Color color) {
+    return OutlinedButton(
+      onPressed: () => _endTask(value),
+      style: OutlinedButton.styleFrom(
+        side: BorderSide(color: color),
+        minimumSize: const Size(0, 46),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      child: Text(label,
+          style: TextStyle(color: color, fontWeight: FontWeight.bold)),
+    );
+  }
+
   Widget _buildMetricsSection() {
     final info = _metricsInfo;
     return Padding(
@@ -826,34 +1106,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ],
                   ),
           ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: _shareMetrics,
-            icon: const Icon(Icons.share, size: 18, color: Colors.white70),
-            label: const Text('Compartir métricas', style: TextStyle(color: Colors.white70)),
-            style: OutlinedButton.styleFrom(
-              side: BorderSide(color: Colors.white.withOpacity(0.2)),
-              minimumSize: const Size(double.infinity, 44),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-          ),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
-            onPressed: _isClearingMetrics ? null : _confirmClearMetrics,
-            icon: _isClearingMetrics
-                ? const SizedBox(
-                    width: 14, height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.redAccent))
-                : const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
-            label: Text(
-              _isClearingMetrics ? 'Borrando...' : 'Borrar métricas',
-              style: const TextStyle(color: Colors.redAccent),
-            ),
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: Colors.redAccent),
-              minimumSize: const Size(double.infinity, 44),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ),
+          const SizedBox(height: 8),
+          const Text(
+            'Exportar y borrar están en "Modo investigador", al final de esta '
+            'pantalla.',
+            style: TextStyle(color: Colors.white38, fontSize: 11),
           ),
           const SizedBox(height: 20),
           const Text(
