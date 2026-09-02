@@ -107,6 +107,10 @@ class MetricsLogger {
     // umbral con datos del dispositivo (ver detection_crop.dart).
     double sharpness = 0,
     String? resolutionPreset,
+    // Escala del recorte donde ORB dio su mejor conteo (1.0 = cuadrado guía
+    // completo). Sirve para saber si la búsqueda multiescala está aportando
+    // algo o si siempre gana 1.0 y se puede quitar.
+    double orbScale = 1.0,
     // Diagnóstico del recorte usado para este intento de búsqueda (ver
     // detection_crop.dart): permite analizar, por objeto, si YOLO logró
     // localizar el objeto (aunque sea con baja confianza) o si se usó el
@@ -159,6 +163,7 @@ class MetricsLogger {
         'orbMatches': orbMatches,
         'sharpness': sharpness,
         'resolutionPreset': resolutionPreset,
+        'orbScale': orbScale,
         'decision': decision,
         'latencyMs': latencyMs,
         'storedObjectCount': storedObjectCount,

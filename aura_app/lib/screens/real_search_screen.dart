@@ -87,6 +87,21 @@ class _RealSearchScreenState extends State<RealSearchScreen>
   /// Cooldown del aviso de duda para no repetirlo cada frame.
   DateTime _lastMaybeAt = DateTime.fromMillisecondsSinceEpoch(0);
 
+  /// Coincidencias ORB a partir de las cuales se asume "está el objeto pero
+  /// lejos" y se pide acercarse.
+  ///
+  /// HIPÓTESIS, no medida: lo que sí está medido es que lo decisivo es qué
+  /// fracción del recorte ocupa el objeto, y acercarse es la única acción que
+  /// alguien que no ve puede ejecutar para cambiar esa variable. Pero la
+  /// separación entre "objeto lejos" y "no hay nada" es estrecha con los datos
+  /// actuales, así que esto puede dispararse con el objeto ausente. Por eso va
+  /// con cooldown largo y sin bloquear nada. Si en las métricas resulta que
+  /// salta con el objeto ausente, se saca.
+  static const int _kOrbNearMatches = 6;
+
+  /// Cooldown del aviso de "acércate".
+  DateTime _lastCloserAt = DateTime.fromMillisecondsSinceEpoch(0);
+
   @override
   void initState() {
     super.initState();
@@ -313,48 +328,84 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           }
         }
 
+        // Búsqueda a VARIAS ESCALAS del recorte.
+        //
+        // Medido con el port de esta implementación, componiendo el objeto
+        // sobre un fondo de libreta (renglones + texto):
+        //
+        //   objeto llenando el cuadro  -> 124 coincidencias
+        //   objeto al 45% del ancho    ->  ~13
+        //   objeto al 20% del ancho    ->  ~18
+        //
+        // Sobre fondo liso funciona en todos los casos. O sea: lo decisivo no
+        // es el fondo en sí, sino QUÉ FRACCIÓN DEL RECORTE ocupa el objeto. Un
+        // fondo con texto es el peor caso porque las letras generan muchísimas
+        // esquinas de alto contraste que desplazan a las del objeto; un
+        // teclado hace lo mismo pero menos; un fondo liso no aporta esquinas.
+        // Coincide con el reporte de campo: mismo fondo bien, laptop regular,
+        // libreta nada.
+        //
+        // Al guardar, el objeto llena el cuadro. Al buscar no, porque quien
+        // busca no ve si lo está llenando. Probando también recortes centrales
+        // más ajustados, un objeto centrado pero chico sube su fracción del
+        // cuadro y deja fuera fondo. La escala 1.0 siempre se evalúa, así que
+        // esto nunca puede quedar peor que antes.
+        //
+        // La multiescala se aplica SOLO a ORB, que es la señal para la que hay
+        // medición. El embedding sigue calculándose una sola vez, en la escala
+        // 1.0: correrlo tres veces por frame agregaría tres inferencias de
+        // MobileNetV2 justo en el caso en que NO hay match (el más frecuente
+        // al escanear), y no tengo ninguna medición que respalde que la
+        // multiescala ayude al coseno. Si las métricas muestran que `orbScale`
+        // distinto de 1.0 aporta, se evalúa extenderlo.
+        const scales = [1.0, 0.7, 0.5];
+        double orbScale = 1.0;
+
         // Mismo preprocesamiento que al guardar (ver detection_crop.dart):
-        // sin esto, comparar una foto guardada con una luz contra una
-        // buscada con otra luz mete ruido adicional al embedding.
-        final frameEmb = await _embeddings.extractEmbedding(normalizeForEmbedding(toEmbed));
+        // sin esto, comparar una foto guardada con una luz contra una buscada
+        // con otra luz mete ruido adicional al embedding.
+        final frameEmb =
+            await _embeddings.extractEmbedding(normalizeForEmbedding(toEmbed));
         if (frameEmb.isEmpty) {
           await Future.delayed(_frameInterval);
           continue;
         }
 
-        // Compara contra TODOS los embeddings disponibles (múltiples ángulos)
+        // Compara contra TODOS los embeddings guardados (varios ángulos).
         double bestSim = 0.0;
-        
-        // Primero intenta con los embeddings nuevos (múltiples ángulos)
-        if (widget.savedObject.embeddings.isNotEmpty) {
-          for (final objEmb in widget.savedObject.embeddings) {
-            final sim = cosineSimilarity(objEmb.embedding, frameEmb);
-            if (sim > bestSim) {
-              bestSim = sim;
-            }
-          }
+        for (final objEmb in widget.savedObject.embeddings) {
+          final v = cosineSimilarity(objEmb.embedding, frameEmb);
+          if (v > bestSim) bestSim = v;
         }
-        
-        // Si no hay embeddings nuevos, usa el embedding legacy
+        // Si no hay embeddings nuevos, usa el embedding legacy.
         if (bestSim == 0.0 && widget.savedObject.embedding.isNotEmpty) {
           bestSim = cosineSimilarity(widget.savedObject.embedding, frameEmb);
         }
 
-        // Segunda señal, INDEPENDIENTE del embedding: coincidencias por
-        // puntos clave (ORB). El embedding de MobileNetV2 describe el recorte
-        // completo, así que al cambiar de superficie se cae — en campo el
-        // objeto solo se reconocía sobre el mismo fondo. Los descriptores ORB
-        // describen parches locales sobre esquinas del objeto: el fondo no
-        // aporta coincidencias y la orientación de cada parche los hace
-        // invariantes a rotación, que eran justo las dos fallas.
-        //
-        // Se suma, no reemplaza: MobileNetV2 sigue siendo lo que pide el
-        // paper, y basta con que CUALQUIERA de las dos señales dé positivo.
+        // Segunda señal, INDEPENDIENTE del embedding: coincidencias por puntos
+        // clave (ORB), evaluadas a varias escalas del recorte y quedándose con
+        // la mejor. Se suma, no reemplaza: MobileNetV2 sigue siendo lo que
+        // pide el paper, y basta con que CUALQUIERA de las dos dé positivo.
         var orbMatches = 0;
         final bank = widget.savedObject.orbBank;
         if (AppSettings.instance.useOrbMatching && bank.isNotEmpty) {
-          final q = OrbMatcher.extract(toEmbed, maxKeypoints: OrbMatcher.kQueryKeypoints);
-          if (q != null) orbMatches = OrbMatcher.bestMatchCount(bank, q);
+          for (final scale in scales) {
+            final candidate = scale == 1.0
+                ? toEmbed
+                : cropCenteredSquare(toEmbed, (toEmbed.width * scale).round());
+            final q = OrbMatcher.extract(candidate,
+                maxKeypoints: OrbMatcher.kQueryKeypoints);
+            if (q != null) {
+              final n = OrbMatcher.bestMatchCount(bank, q);
+              if (n > orbMatches) {
+                orbMatches = n;
+                orbScale = scale;
+              }
+            }
+            // Corte temprano: si ya alcanza, el caso exitoso queda tan rápido
+            // como antes de la multiescala.
+            if (orbMatches >= OrbMatcher.kMinGoodMatches) break;
+          }
         }
         final orbFound = orbMatches >= OrbMatcher.kMinGoodMatches;
 
@@ -380,6 +431,7 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           cropMethod: cropMethod,
           orbMatches: orbMatches,
           sharpness: sharpness,
+          orbScale: orbScale,
         );
 
         if (found) {
@@ -387,6 +439,8 @@ class _RealSearchScreenState extends State<RealSearchScreen>
           return;
         } else if (bestSim >= _kMaybeThreshold) {
           _announceMaybe();
+        } else if (orbMatches >= _kOrbNearMatches) {
+          _announceGetCloser();
         }
       } catch (e) {
         debugPrint('RealSearchScreen scan error: $e');
@@ -415,6 +469,7 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     double? discardedBoxHeight,
     int orbMatches = 0,
     double sharpness = 0,
+    double orbScale = 1.0,
   }) async {
     try {
       final allSavedObjects = await _savedObjectsRepo.getAll();
@@ -443,6 +498,7 @@ class _RealSearchScreenState extends State<RealSearchScreen>
         allObjectSimilarities: allSims,
         orbMatches: orbMatches,
         sharpness: sharpness,
+        orbScale: orbScale,
         resolutionPreset: _activePreset,
         cropMethod: cropMethod,
         cropDetectionClassId: cropClassId,
@@ -482,6 +538,13 @@ class _RealSearchScreenState extends State<RealSearchScreen>
     if (now.difference(_lastMaybeAt) < const Duration(seconds: 4)) return;
     _lastMaybeAt = now;
     _audio.speak('Creo que veo tu ${widget.target}, pero no estoy seguro.');
+  }
+
+  void _announceGetCloser() {
+    final now = DateTime.now();
+    if (now.difference(_lastCloserAt) < const Duration(seconds: 5)) return;
+    _lastCloserAt = now;
+    _audio.speak('Puede que sea, acércate un poco más.');
   }
 
   void _searchAgain() {
