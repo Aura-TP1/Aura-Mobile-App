@@ -86,12 +86,15 @@ class AppSettings extends ChangeNotifier {
   /// el embedding global se cae al cambiar el fondo, mientras que los
   /// descriptores locales ignoran el fondo y son invariantes a rotación.
   ///
-  /// Encendido por defecto: en la validación contra la foto real del blister,
-  /// el peor positivo quedó ~6x por encima del peor negativo, justo en los dos
-  /// casos que fallaban en campo (otro fondo, y el objeto en diagonal). Se
-  /// deja como toggle para poder medir con y sin, y porque MobileNetV2 sigue
-  /// siendo lo que pide el paper: ORB se suma, no lo reemplaza.
-  bool useOrbMatching = true;
+  /// Apagado por defecto: datos de campo de las primeras sesiones de
+  /// validación (P01-P03) mostraron que la mayoría de los "found" quedaban
+  /// impulsados por ORB en frames con similitud coseno muy por debajo del
+  /// umbral (0.42-0.59 vs. 0.75), sin que ORB haya sido evaluado todavía
+  /// contra objetos visualmente confundibles entre sí. Se deja apagado para
+  /// que las próximas sesiones (técnicas y con usuarios) midan limpiamente
+  /// el pipeline MobileNetV2 + guide-frame solo. Sigue siendo un toggle
+  /// manual desde Ajustes para quien quiera evaluarlo aparte.
+  bool useOrbMatching = false;
 
   /// Intervalo entre cuadros analizados en la búsqueda por cámara (ms).
   /// WCAG 2.2.1: tiempo ajustable en lugar de fijo (300ms por defecto).
