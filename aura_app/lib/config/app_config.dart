@@ -15,7 +15,7 @@ class AppConfig {
       GlobalKey<NavigatorState>();
 
   static const String _devFallbackUrl =
-      'https://backend-production-e2c1.up.railway.app';
+      'https://backend-production-7db33532.up.railway.app';
 
   /// URL base del backend. Inyectada con --dart-define=BACKEND_URL=...
   /// En release sin dart-define, lanzará un assert para forzar configuración.
