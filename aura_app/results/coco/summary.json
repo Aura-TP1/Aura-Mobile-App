@@ -1,0 +1,38 @@
+{
+  "int8": {
+    "reproduction_at_0.4": {
+      "tp": 10626,
+      "fp": 1744,
+      "fn": 25709,
+      "precision": 0.859013742926435,
+      "recall": 0.292445300674281,
+      "false_discovery_rate": 0.14098625707356505,
+      "mAP50_custom": 0.27157605446106575
+    },
+    "pycocotools": {
+      "mAP_50_95": 0.2709125493883598,
+      "mAP_50": 0.4020530398913425
+    },
+    "sweep_csv": "sweep_int8.csv",
+    "household_csv": "household_recall_int8.csv",
+    "n_images": 5000
+  },
+  "float32": {
+    "reproduction_at_0.4": {
+      "tp": 10677,
+      "fp": 1778,
+      "fn": 25658,
+      "precision": 0.8572460859092734,
+      "recall": 0.2938489060134856,
+      "false_discovery_rate": 0.14275391409072657,
+      "mAP50_custom": 0.2731643783503917
+    },
+    "pycocotools": {
+      "mAP_50_95": 0.27155305651144684,
+      "mAP_50": 0.40191920955677374
+    },
+    "sweep_csv": "sweep_float32.csv",
+    "household_csv": "household_recall_float32.csv",
+    "n_images": 5000
+  }
+}
