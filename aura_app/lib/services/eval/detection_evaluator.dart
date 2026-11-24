@@ -235,10 +235,16 @@ List<_Box> _runInference(Interpreter interpreter, img.Image image) {
     }
     if (maxConf < _confThreshold) continue;
 
-    final cx = output[0 * _numBoxes + i] / _inputSize;
-    final cy = output[1 * _numBoxes + i] / _inputSize;
-    final w = output[2 * _numBoxes + i] / _inputSize;
-    final h = output[3 * _numBoxes + i] / _inputSize;
+    // Las coordenadas ya vienen normalizadas [0,1] del propio modelo — ver
+    // el fix equivalente en object_detector_native.dart (commit 65a3208,
+    // "Fix critical units bug: YOLO box coords were divided by 320 twice").
+    // Este evaluador nunca había recibido ese fix: seguía dividiendo por
+    // _inputSize una segunda vez, encogiendo cada caja ~320x y volviendo
+    // casi cualquier IoU contra un ground truth real ≈0.
+    final cx = output[0 * _numBoxes + i];
+    final cy = output[1 * _numBoxes + i];
+    final w = output[2 * _numBoxes + i];
+    final h = output[3 * _numBoxes + i];
 
     raw.add(_Box(
       classId: classId,
